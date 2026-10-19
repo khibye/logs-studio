@@ -1,0 +1,17 @@
+{
+  "settings": { "number_of_shards": 1, "number_of_replicas": 1 },
+  "mappings": {
+    "dynamic": false,
+    "properties": {
+      "dashboard_id": { "type": "keyword" },
+      "version": { "type": "integer" },
+      "title": { "type": "text", "fields": { "keyword": { "type": "keyword", "ignore_above": 256 } } },
+      "notes": { "type": "text" },
+      "saved_at": { "type": "date" },
+      "panel_count": { "type": "integer" },
+      "forked_from_id": { "type": "keyword" },
+      "forked_from_version": { "type": "integer" },
+      "recipe_json": { "type": "text", "index": false }
+    }
+  }
+}

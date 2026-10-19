@@ -1,0 +1,38 @@
+{
+  "name": "logs-studio",
+  "version": "0.1.0",
+  "scripts": {
+    "dev": "concurrently -k -n server,web -c cyan,magenta \"tsx watch src/server/index.ts\" \"vite\"",
+    "build": "vite build && esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --target=node20 --outfile=dist/server.js",
+    "start": "node dist/server.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "mock": "concurrently -k -n es,llm \"tsx scripts/mock-elastic.ts\" \"tsx scripts/mock-llm.ts\""
+  },
+  "dependencies": {
+    "dotenv": "^18.0.8",
+    "echarts": "^6.1.0",
+    "express": "^5.3.0",
+    "lz-string": "^1.5.0",
+    "openai": "^7.39.0",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "zod": "^4.6.7"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/node": "^26.6.5",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.1.2",
+    "concurrently": "^10.0.6",
+    "esbuild": "^0.28.2",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.4"
+  },
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  }
+}
