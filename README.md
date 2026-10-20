@@ -87,7 +87,7 @@
 - המפתח צריך גם **הרשאת Dev Tools ב-Kibana**. בלעדיה תופיע הודעה ברורה בסטטוס.
 - ל-Kibana יש מגבלת זמן משלה לבקשות דרך ה-proxy (בדרך כלל 30 שניות, `elasticsearch.requestTimeout`). הגדלת `QUERY_TIMEOUT_MS` לא תעזור מעבר לה.
 - `ELASTIC_CONNECTION` קובע את האופן: `auto` (ברירת מחדל: ישיר אם יש `ELASTIC_URL`, אחרת דרך Kibana), `direct` או `kibana`.
-- אם `KIBANA_URL` מצביע בטעות על Elasticsearch, תופיע בסטטוס הודעה על כך, וכפתור Discover יכובה במקום להוביל לקישור שבור.
+- אם `KIBANA_URL` מצביע בטעות על Elasticsearch, תופיע אזהרה בחלון הסטטוס. כפתור Discover נשאר פעיל.
 - **"אין לך הרשאה לדף"** כשפותחים את Discover: הקישור נפתח עם המשתמש שלך ב-Kibana, לא עם המפתח של האפליקציה. בדרך כלל זה Space. אם בכתובת הרגילה שלך ב-Kibana יש `/s/<שם>/`, מגדירים `KIBANA_SPACE=<שם>`, ואת `KIBANA_URL` בלי החלק `/s/...`.
 - איך מוצאים את כתובת Elasticsearch, אם רוצים חיבור ישיר: ב-Kibana, תפריט העזרה (סימן השאלה) ← **Connection details** ← Endpoints.
 

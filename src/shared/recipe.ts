@@ -103,7 +103,7 @@ export type Capabilities = {
   llm: { configured: boolean; model?: string };
   logs: { read: boolean; patterns: string[]; reason?: string };
   library: { read: boolean; write: boolean; index: string; reason?: string; env?: string };
-  discover: { enabled: boolean; baseUrl?: string; reason?: string };
+  discover: { enabled: boolean; baseUrl?: string; reason?: string; warning?: string };
   chat: { retentionHours: number };
   admin: { enabled: boolean };
   /** The environment these capabilities describe, and all environments to choose from. */

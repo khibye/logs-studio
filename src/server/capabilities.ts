@@ -140,9 +140,8 @@ export async function getCapabilities(force = false): Promise<Capabilities> {
     if (probe.isElasticsearch) {
       const why = "KIBANA_URL points to Elasticsearch, not Kibana. Use the address you open Kibana with in the browser.";
       caps.kibanaExport.reason = why;
-      if (config.kibana.publicUrl === config.kibana.url) {
-        caps.discover = { enabled: false, reason: why };
-      }
+      // Only a warning: the Discover button stays on (the check could be wrong behind some proxies).
+      if (config.kibana.publicUrl === config.kibana.url) caps.discover.warning = why;
     } else if (!v) caps.kibanaExport.reason = "Could not read the Kibana version";
     else if (!versionAtLeast(v, 9, 4)) caps.kibanaExport.reason = `Needs Kibana 9.4 or later (this is ${v})`;
     else caps.kibanaExport.enabled = true;

@@ -48,7 +48,11 @@ export function CapsList({ caps }: { caps: Capabilities }) {
         detail={caps.library.reason}
       />
       <Row ok={true} title="שמירה בקישור ובקובץ JSON" />
-      <Row ok={caps.discover.enabled} title="פתיחה ב-Discover" detail={caps.discover.reason} />
+      <Row
+        ok={caps.discover.enabled ? (caps.discover.warning ? "partial" : true) : false}
+        title="פתיחה ב-Discover"
+        detail={caps.discover.warning ?? caps.discover.reason}
+      />
       <Row ok={caps.kibanaExport.enabled} title="ייצוא לדשבורד Kibana (ניסיוני)" detail={caps.kibanaExport.reason} />
     </ul>
   );
