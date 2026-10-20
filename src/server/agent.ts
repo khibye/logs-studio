@@ -7,6 +7,7 @@ import type {
 import { config } from "./config";
 import { HttpError, runEsql } from "./elastic";
 import { systemPrompt } from "./prompt";
+import { llmClient } from "./llm";
 import {
   PANEL_TYPES,
   PanelSchema,
@@ -194,12 +195,12 @@ export async function runAgent(input: {
   messages: ChatMessage[];
   recipe: Recipe | null;
   range: TimeRangeKey;
+  model: string;
   signal: AbortSignal;
   emit: (e: ChatEvent) => void;
 }) {
-  const { range, signal, emit } = input;
-  if (!config.llm.baseUrl || !config.llm.model) throw new HttpError(500, "LLM_BASE_URL and LLM_MODEL must be set");
-  const client = new OpenAI({ baseURL: config.llm.baseUrl, apiKey: config.llm.apiKey });
+  const { range, model, signal, emit } = input;
+  const client = llmClient();
 
   let draft = input.recipe;
   const convo: ChatCompletionMessageParam[] = [
@@ -272,7 +273,7 @@ export async function runAgent(input: {
   }
 
   for (let step = 0; step < config.llm.maxSteps; step++) {
-    const { text, toolCalls } = await complete(client, convo, signal, emit);
+    const { text, toolCalls } = await complete(client, model, convo, signal, emit);
     convo.push({
       role: "assistant",
       content: text || null,
@@ -295,11 +296,12 @@ export async function runAgent(input: {
 
 async function complete(
   client: OpenAI,
+  model: string,
   messages: ChatCompletionMessageParam[],
   signal: AbortSignal,
   emit: (e: ChatEvent) => void,
 ): Promise<{ text: string; toolCalls: ToolCall[] }> {
-  const base = { model: config.llm.model, messages, tools, temperature: config.llm.temperature };
+  const base = { model, messages, tools, temperature: config.llm.temperature };
 
   if (!config.llm.stream) {
     const res = await client.chat.completions.create({ ...base, stream: false }, { signal });

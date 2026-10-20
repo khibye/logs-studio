@@ -1,0 +1,64 @@
+# Example only — adjust names, namespace, image and storage class.
+# Settings changed in the admin panel are written to /app/data/settings.json,
+# so /app/data is a PersistentVolumeClaim. With a ReadWriteOnce volume run ONE
+# replica (strategy: Recreate). For several replicas use a ReadWriteMany volume:
+# every pod re-reads the file within ~10 s of a change.
+apiVersion: v1
+kind: Secret
+metadata:
+  name: logs-studio
+type: Opaque
+stringData:
+  KIBANA_URL: "https://kibana.example.com"
+  ELASTIC_API_KEY: "<encoded api key>"
+  LOG_INDEX_PATTERNS: "logs-myapp-*"
+  LLM_BASE_URL: "https://llm.example.com/v1"
+  LLM_API_KEY: "<llm key>"
+  LLM_MODEL: "<default model>"
+  ADMIN_PASSWORD: "<choose a strong password>"
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: logs-studio-data
+spec:
+  accessModes: ["ReadWriteOnce"]
+  resources:
+    requests:
+      storage: 100Mi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: logs-studio
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels: { app: logs-studio }
+  template:
+    metadata:
+      labels: { app: logs-studio }
+    spec:
+      securityContext:
+        fsGroup: 1000 # the "node" user in the image, so it can write to the volume
+      containers:
+        - name: app
+          image: <registry>/logs-studio:latest
+          ports: [{ containerPort: 8787 }]
+          envFrom: [{ secretRef: { name: logs-studio } }]
+          volumeMounts: [{ name: data, mountPath: /app/data }]
+          readinessProbe:
+            httpGet: { path: /api/health, port: 8787 }
+      volumes:
+        - name: data
+          persistentVolumeClaim: { claimName: logs-studio-data }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: logs-studio
+spec:
+  selector: { app: logs-studio }
+  ports: [{ port: 80, targetPort: 8787 }]

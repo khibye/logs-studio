@@ -8,6 +8,8 @@ export class HttpError extends Error {
 }
 
 function esReason(body: any, status: number): string {
+  // Kibana's own errors (console proxy): { statusCode, error, message }
+  if (typeof body?.statusCode === "number" && typeof body?.message === "string") return body.message;
   const e = body?.error;
   if (typeof e === "string") return e;
   if (e?.reason) {
@@ -18,28 +20,60 @@ function esReason(body: any, status: number): string {
   return `Elasticsearch returned HTTP ${status}`;
 }
 
-/** Thin fetch wrapper around the Elasticsearch REST API, authenticated with the API key. */
+/** A response produced by Kibana itself, not forwarded from Elasticsearch. */
+function isKibanaError(body: any): boolean {
+  return typeof body?.statusCode === "number" && typeof body?.message === "string" && !body?.error?.type;
+}
+
+/**
+ * Thin fetch wrapper around the Elasticsearch REST API, authenticated with the API key.
+ *
+ * In "kibana" mode (only a Kibana address is available) every call goes through
+ * Kibana's console proxy — the same endpoint Dev Tools uses:
+ *   POST <kibana>/api/console/proxy?path=<es path>&method=<METHOD>
+ * The API key then also needs the Dev Tools privilege in Kibana.
+ */
 export async function es<T = any>(
   path: string,
   opts: { method?: string; body?: unknown; signal?: AbortSignal; allow404?: boolean } = {},
 ): Promise<T> {
+  const method = opts.method ?? (opts.body === undefined ? "GET" : "POST");
+  const viaKibana = config.elastic.connection === "kibana";
   const timeout = AbortSignal.timeout(config.elastic.queryTimeoutMs);
   const signal = opts.signal ? AbortSignal.any([opts.signal, timeout]) : timeout;
+
+  let url: string;
+  let headers: Record<string, string>;
+  let target: string;
+  if (viaKibana) {
+    if (!config.kibana.url) throw new HttpError(500, "Connection is set to go through Kibana, but KIBANA_URL is not set");
+    const apiKey = config.elastic.apiKey || config.kibana.apiKey;
+    url = `${config.kibana.url}/api/console/proxy?path=${encodeURIComponent(path.replace(/^\//, ""))}&method=${method}`;
+    headers = {
+      Authorization: `ApiKey ${apiKey}`,
+      "Content-Type": "application/json",
+      "kbn-xsrf": "true",
+      "x-elastic-internal-origin": "Kibana",
+    };
+    target = `Kibana at ${config.kibana.url}`;
+  } else {
+    url = config.elastic.url + path;
+    headers = { Authorization: `ApiKey ${config.elastic.apiKey}`, "Content-Type": "application/json" };
+    target = `Elasticsearch at ${config.elastic.url}`;
+  }
+
   let res: Response;
   try {
-    res = await fetch(config.elastic.url + path, {
-      method: opts.method ?? (opts.body === undefined ? "GET" : "POST"),
-      headers: {
-        Authorization: `ApiKey ${config.elastic.apiKey}`,
-        "Content-Type": "application/json",
-      },
+    res = await fetch(url, {
+      method: viaKibana ? "POST" : method,
+      headers,
       body: opts.body === undefined ? undefined : JSON.stringify(opts.body),
       signal,
     });
   } catch (err: any) {
-    if (err?.name === "TimeoutError") throw new HttpError(504, "Elasticsearch did not answer in time");
+    if (err?.name === "TimeoutError") throw new HttpError(504, `${viaKibana ? "Kibana" : "Elasticsearch"} did not answer in time`);
     if (err?.name === "AbortError") throw new HttpError(499, "Request cancelled");
-    throw new HttpError(502, `Cannot reach Elasticsearch at ${config.elastic.url}: ${err?.cause?.code ?? err?.message}`);
+    throw new HttpError(502, `Cannot reach ${target}: ${err?.cause?.code ?? err?.message}`);
   }
   const text = await res.text();
   let body: any = undefined;
@@ -48,9 +82,18 @@ export async function es<T = any>(
   } catch {
     body = text;
   }
-  if (!res.ok) {
-    if (res.status === 404 && opts.allow404) return body as T;
-    throw new HttpError(res.status, esReason(body, res.status), body);
+  // Some Kibana versions report the upstream status in a header.
+  const status = Number(res.headers.get("x-console-proxy-status-code")) || res.status;
+  if (status >= 400) {
+    if (status === 404 && opts.allow404 && !(viaKibana && isKibanaError(body))) return body as T;
+    let msg = esReason(body, status);
+    if (viaKibana && isKibanaError(body)) {
+      if (status === 401) msg = `Kibana rejected the API key (401): ${msg}`;
+      else if (status === 403)
+        msg = `Kibana refused the console proxy (403): ${msg}. The API key needs the Dev Tools privilege in Kibana.`;
+      else if (status === 404) msg = `Kibana console proxy not found (404) at ${config.kibana.url}: ${msg}`;
+    }
+    throw new HttpError(status, msg, body);
   }
   return body as T;
 }

@@ -27,6 +27,32 @@ function Row({ ok, title, detail }: { ok: boolean | "partial"; title: string; de
   );
 }
 
+/** The connection / permission checklist — used in the header popover and the admin page. */
+export function CapsList({ caps }: { caps: Capabilities }) {
+  const via = caps.elastic.via === "kibana" ? " (דרך Kibana)" : "";
+  return (
+    <ul className="caps-list">
+      <Row ok={caps.elastic.ok} title={`Elasticsearch ${caps.elastic.version ?? ""}${via}`} detail={caps.elastic.error} />
+      <Row ok={caps.logs.read} title={`קריאת לוגים: ${caps.logs.patterns.join(", ")}`} detail={caps.logs.reason} />
+      <Row ok={caps.llm.configured} title="מודל AI" detail={caps.llm.model} />
+      <Row
+        ok={caps.library.write ? true : caps.library.read ? "partial" : false}
+        title={
+          caps.library.write
+            ? `ספרייה משותפת (${caps.library.index}): קריאה וכתיבה`
+            : caps.library.read
+              ? `ספרייה משותפת (${caps.library.index}): קריאה בלבד`
+              : `ספרייה משותפת (${caps.library.index}): לא זמינה`
+        }
+        detail={caps.library.reason}
+      />
+      <Row ok={true} title="שמירה בקישור ובקובץ JSON" />
+      <Row ok={caps.discover.enabled} title="פתיחה ב-Discover" detail={caps.discover.enabled ? undefined : "KIBANA_URL is not set"} />
+      <Row ok={caps.kibanaExport.enabled} title="ייצוא לדשבורד Kibana (ניסיוני)" detail={caps.kibanaExport.reason} />
+    </ul>
+  );
+}
+
 function Status({ caps, onRecheck }: { caps: Capabilities | null; onRecheck: () => void }) {
   const tone = !caps
     ? "neutral"
@@ -47,32 +73,17 @@ function Status({ caps, onRecheck }: { caps: Capabilities | null; onRecheck: () 
       {() =>
         caps ? (
           <div className="caps">
-            <ul>
-              <Row ok={caps.elastic.ok} title={`Elasticsearch ${caps.elastic.version ?? ""}`} detail={caps.elastic.error} />
-              <Row ok={caps.logs.read} title={`קריאת לוגים: ${caps.logs.patterns.join(", ")}`} detail={caps.logs.reason} />
-              <Row ok={caps.llm.configured} title="מודל AI" detail={caps.llm.model} />
-              <Row
-                ok={caps.library.write ? true : caps.library.read ? "partial" : false}
-                title={
-                  caps.library.write
-                    ? `ספרייה משותפת (${caps.library.index}): קריאה וכתיבה`
-                    : caps.library.read
-                      ? `ספרייה משותפת (${caps.library.index}): קריאה בלבד`
-                      : `ספרייה משותפת (${caps.library.index}): לא זמינה`
-                }
-                detail={caps.library.reason}
-              />
-              <Row ok={true} title="שמירה בקישור ובקובץ JSON" />
-              <Row ok={caps.discover.enabled} title="פתיחה ב-Discover" detail={caps.discover.enabled ? undefined : "KIBANA_URL is not set"} />
-              <Row
-                ok={caps.kibanaExport.enabled}
-                title="ייצוא לדשבורד Kibana (ניסיוני)"
-                detail={caps.kibanaExport.reason}
-              />
-            </ul>
-            <button type="button" className="btn small" onClick={onRecheck}>
-              <Icon.Refresh size={14} /> בדוק שוב
-            </button>
+            <CapsList caps={caps} />
+            <div className="caps-actions">
+              <button type="button" className="btn small" onClick={onRecheck}>
+                <Icon.Refresh size={14} /> בדוק שוב
+              </button>
+              {caps.admin.enabled && (
+                <a className="btn small" href="#/admin">
+                  הגדרות
+                </a>
+              )}
+            </div>
           </div>
         ) : (
           <div className="menu-note">בודק…</div>
@@ -83,7 +94,7 @@ function Status({ caps, onRecheck }: { caps: Capabilities | null; onRecheck: () 
 }
 
 export function Header(props: {
-  view: "studio" | "library";
+  view: "studio" | "library" | "admin";
   studioHref: string;
   caps: Capabilities | null;
   range: TimeRangeKey;
@@ -107,6 +118,11 @@ export function Header(props: {
         <a href="#/library" aria-current={view === "library" ? "page" : undefined}>
           הדשבורדים שלי
         </a>
+        {caps?.admin?.enabled && (
+          <a href="#/admin" aria-current={view === "admin" ? "page" : undefined}>
+            ניהול
+          </a>
+        )}
       </nav>
       <a className="btn ghost" href="#/new">
         <Icon.Plus size={16} /> חדש

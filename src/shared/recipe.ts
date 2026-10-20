@@ -96,12 +96,13 @@ export type DashboardSummary = {
 };
 
 export type Capabilities = {
-  elastic: { ok: boolean; version?: string; error?: string };
+  elastic: { ok: boolean; version?: string; error?: string; via: "direct" | "kibana" };
   llm: { configured: boolean; model?: string };
   logs: { read: boolean; patterns: string[]; reason?: string };
   library: { read: boolean; write: boolean; index: string; reason?: string };
   discover: { enabled: boolean; baseUrl?: string };
   chat: { retentionHours: number };
+  admin: { enabled: boolean };
   kibanaExport: { enabled: boolean; experimental: true; reason?: string; kibanaVersion?: string };
 };
 
@@ -122,3 +123,5 @@ export type ChatEvent =
   | { type: "done" };
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
+
+export type ModelsInfo = { models: string[]; default: string; error?: string };

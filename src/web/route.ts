@@ -7,6 +7,7 @@ import { useEffect, useState } from "react";
  *   #/r/<payload>   a dashboard embedded in the link itself
  *   #/d/<id>?v=<n>  a dashboard from the library (optionally a specific version)
  *   #/library       the dashboards list
+ *   #/admin         settings (needs ADMIN_PASSWORD on the server)
  * Any studio route may carry &s=<key>: the id of the conversation kept in this
  * browser (see chatStore.ts), so a reload brings the chat back. The key is
  * meaningless in any other browser.
@@ -15,7 +16,8 @@ export type Route =
   | { name: "new"; fresh: boolean; session?: string }
   | { name: "shared"; payload: string; session?: string }
   | { name: "saved"; id: string; version?: number; session?: string }
-  | { name: "library" };
+  | { name: "library" }
+  | { name: "admin" };
 
 export function parseHash(hash: string): Route {
   const h = hash.replace(/^#/, "");
@@ -24,6 +26,7 @@ export function parseHash(hash: string): Route {
   const params = new URLSearchParams(q >= 0 ? h.slice(q + 1) : "");
   const session = params.get("s") || undefined;
   if (path.startsWith("/library")) return { name: "library" };
+  if (path.startsWith("/admin")) return { name: "admin" };
   if (path.startsWith("/new")) return { name: "new", fresh: true };
   const shared = /^\/r\/(.+)$/.exec(path);
   if (shared) return { name: "shared", payload: shared[1], session };

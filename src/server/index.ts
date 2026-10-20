@@ -9,6 +9,8 @@ import { getCapabilities } from "./capabilities";
 import { getDashboard, listDashboards, listVersions, saveDashboard } from "./library";
 import { exportToKibana } from "./kibanaExport";
 import { runAgent } from "./agent";
+import { listModels, resolveModel } from "./llm";
+import { adminRouter } from "./admin";
 import { RecipeSchema, TIME_RANGE_KEYS, type ChatEvent, type TimeRangeKey } from "../shared/recipe";
 
 /**
@@ -20,13 +22,13 @@ const app = express();
 app.disable("x-powered-by");
 app.use(express.json({ limit: "2mb" }));
 
-if (config.basicAuth) {
+// Optional basic auth — read on every request, so changing it in the admin panel applies at once.
+app.use((req, res, next) => {
+  if (!config.basicAuth || req.path === "/api/health") return next();
   const expected = "Basic " + Buffer.from(config.basicAuth).toString("base64");
-  app.use((req, res, next) => {
-    if (req.headers.authorization === expected) return next();
-    res.setHeader("WWW-Authenticate", 'Basic realm="Logs Studio"').status(401).send("Authentication required");
-  });
-}
+  if (req.headers.authorization === expected) return next();
+  res.setHeader("WWW-Authenticate", 'Basic realm="Logs Studio"').status(401).send("Authentication required");
+});
 
 const RangeSchema = z.enum(TIME_RANGE_KEYS as [TimeRangeKey, ...TimeRangeKey[]]).default("24h");
 
@@ -50,6 +52,15 @@ app.get(
   }),
 );
 
+app.get(
+  "/api/models",
+  route(async (req, res) => {
+    res.json(await listModels(req.query.refresh === "1"));
+  }),
+);
+
+app.use("/api/admin", adminRouter);
+
 app.post(
   "/api/query",
   route(async (req, res) => {
@@ -71,9 +82,11 @@ app.post(
           .max(60),
         recipe: z.unknown().optional(),
         time_range: RangeSchema,
+        model: z.string().max(200).optional(),
       })
       .parse(req.body);
     const parsed = body.recipe ? RecipeSchema.safeParse(body.recipe) : null;
+    const model = await resolveModel(body.model); // before streaming, so a bad model is a normal 400
 
     res.status(200);
     res.setHeader("Content-Type", "application/x-ndjson; charset=utf-8");
@@ -91,6 +104,7 @@ app.post(
         messages: body.messages.slice(-30),
         recipe: parsed?.success ? parsed.data : null,
         range: body.time_range,
+        model,
         signal: ctrl.signal,
         emit,
       });
@@ -173,6 +187,11 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
 
 app.listen(config.port, () => {
   console.log(`Logs Studio listening on http://localhost:${config.port}`);
-  console.log(`  Elasticsearch: ${config.elastic.url}  ·  patterns: ${config.elastic.logPatterns.join(", ")}`);
+  console.log(
+    config.elastic.connection === "kibana"
+      ? `  Elasticsearch: through Kibana at ${config.kibana.url}  ·  patterns: ${config.elastic.logPatterns.join(", ")}`
+      : `  Elasticsearch: ${config.elastic.url}  ·  patterns: ${config.elastic.logPatterns.join(", ")}`,
+  );
   console.log(`  LLM: ${config.llm.baseUrl || "(not set)"}  ·  model: ${config.llm.model || "(not set)"}`);
+  console.log(`  Admin panel: ${config.adminPassword ? "enabled" : "disabled (set ADMIN_PASSWORD)"}`);
 });

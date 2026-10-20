@@ -8,6 +8,8 @@ export type UiMessage = {
   tools?: ToolChip[];
   streaming?: boolean;
   error?: string;
+  /** Which model answered (shown when the conversation used more than one). */
+  model?: string;
 };
 
 /** Renders `inline code` without interpreting any HTML. */
@@ -41,13 +43,18 @@ export function Chat(props: {
   hasDashboard: boolean;
   basedOn?: string;
   llm: { configured: boolean; model?: string };
+  models: string[];
+  model: string;
+  onModel: (m: string) => void;
   restored?: boolean;
   retentionHours?: number;
   onSend: (text: string) => void;
   onStop: () => void;
   onNewChat: () => void;
 }) {
-  const { messages, busy, hasDashboard, basedOn, llm, restored, retentionHours = 0, onSend, onStop, onNewChat } = props;
+  const { messages, busy, hasDashboard, basedOn, llm, models, model, onModel, restored, retentionHours = 0, onSend, onStop, onNewChat } =
+    props;
+  const mixedModels = new Set(messages.filter((m) => m.role === "assistant" && m.model).map((m) => m.model)).size > 1;
   const keepFor = retentionHours >= 48 ? `${Math.round(retentionHours / 24)} ימים` : `${retentionHours} שעות`;
   const [text, setText] = useState("");
   const listRef = useRef<HTMLDivElement>(null);
@@ -79,12 +86,23 @@ export function Chat(props: {
         <div>
           <div className="chat-title">שיחה</div>
           <div className="chat-sub">
-            {llm.configured ? (
-              <>
-                מודל: <bdi dir="ltr">{llm.model}</bdi>
-              </>
-            ) : (
+            {!llm.configured ? (
               "המודל לא מוגדר בשרת"
+            ) : models.length > 1 ? (
+              <label className="model-pick">
+                <span>מודל:</span>
+                <select value={model} onChange={(e) => onModel(e.target.value)} disabled={busy} dir="ltr">
+                  {models.map((m) => (
+                    <option key={m} value={m}>
+                      {m}
+                    </option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              <>
+                מודל: <bdi dir="ltr">{model || llm.model}</bdi>
+              </>
             )}
           </div>
         </div>
@@ -135,6 +153,11 @@ export function Chat(props: {
               {m.error && (
                 <div className="msg-error" role="alert">
                   <bdi dir="ltr">{m.error}</bdi>
+                </div>
+              )}
+              {mixedModels && m.model && (
+                <div className="msg-model" dir="ltr">
+                  {m.model}
                 </div>
               )}
             </div>

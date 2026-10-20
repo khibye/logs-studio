@@ -1,72 +1,117 @@
 import "dotenv/config";
-import { readFileSync } from "node:fs";
+import { rawValue, reloadIfChanged } from "./settings";
 
-function list(v: string | undefined, fallback: string[]): string[] {
+/**
+ * The effective configuration. Built from settings.ts (admin overrides →
+ * environment → defaults) and rebuilt in place whenever settings change, so
+ * every module reads current values through `config.x.y` at call time.
+ *
+ * Environment-only (never editable from the admin panel): PORT, ADMIN_PASSWORD,
+ * DATA_DIR, LOG_CONTEXT_FILE.
+ */
+
+function list(v: string | undefined, fallback: string[] = []): string[] {
   const items = (v ?? "").split(",").map((s) => s.trim()).filter(Boolean);
   return items.length ? items : fallback;
 }
 
-/** Free-text description of the data for the model: LOG_CONTEXT, or a file named by LOG_CONTEXT_FILE. */
-function logContext(): string {
-  let text = process.env.LOG_CONTEXT ?? "";
-  if (process.env.LOG_CONTEXT_FILE) {
-    try {
-      text = readFileSync(process.env.LOG_CONTEXT_FILE, "utf8");
-    } catch (err: any) {
-      console.warn(`LOG_CONTEXT_FILE could not be read: ${err.message}`);
-    }
-  }
-  text = text.replace(/\\n/g, "\n").trim();
-  return text.length > 6000 ? text.slice(0, 6000) : text;
+function num(v: string | undefined, fallback: number): number {
+  const n = Number(v);
+  return v !== undefined && v !== "" && Number.isFinite(n) ? n : fallback;
 }
 
 function trimSlash(u: string | undefined): string | undefined {
   return u ? u.replace(/\/+$/, "") : undefined;
 }
 
-export const config = {
-  port: Number(process.env.PORT ?? 8787),
+function logContext(): string {
+  const text = (rawValue("LOG_CONTEXT") ?? "").replace(/\\n/g, "\n").trim();
+  return text.length > 6000 ? text.slice(0, 6000) : text;
+}
 
-  /** Optional "user:password" — protects the whole app with HTTP basic auth. */
-  basicAuth: process.env.APP_BASIC_AUTH || undefined,
+export type Connection = "direct" | "kibana";
 
-  elastic: {
-    url: trimSlash(process.env.ELASTIC_URL) ?? "http://localhost:9200",
-    apiKey: process.env.ELASTIC_API_KEY ?? "",
-    /** Index patterns the model and the dashboards may query. */
-    logPatterns: list(process.env.LOG_INDEX_PATTERNS, ["logs-*"]),
-    timeField: process.env.TIME_FIELD || "@timestamp",
-    /** What the data means, in your words — given to the model in every conversation. */
-    logContext: logContext(),
-    dashboardsIndex: process.env.DASHBOARDS_INDEX || "ai-dashboards",
-    /** Hard cap on rows any query may return. */
-    maxRows: Number(process.env.MAX_ROWS ?? 1000),
-    queryTimeoutMs: Number(process.env.QUERY_TIMEOUT_MS ?? 30000),
-  },
+function build() {
+  const v = rawValue;
+  const esUrl = trimSlash(v("ELASTIC_URL"));
+  const kbUrl = trimSlash(v("KIBANA_URL"));
+  const mode = v("ELASTIC_CONNECTION") ?? "auto";
+  const connection: Connection =
+    mode === "direct" ? "direct" : mode === "kibana" ? "kibana" : esUrl ? "direct" : kbUrl ? "kibana" : "direct";
 
-  kibana: {
-    /** Address the server uses to call Kibana (export, version check). */
-    url: trimSlash(process.env.KIBANA_URL),
-    /** Address users' browsers use for "Open in Discover" links. Defaults to KIBANA_URL. */
-    publicUrl: trimSlash(process.env.KIBANA_PUBLIC_URL || process.env.KIBANA_URL),
-    space: process.env.KIBANA_SPACE || "",
-    /** Kibana API key; defaults to ELASTIC_API_KEY. */
-    apiKey: process.env.KIBANA_API_KEY || process.env.ELASTIC_API_KEY || "",
-    exportEnabled: (process.env.KIBANA_EXPORT ?? "auto") !== "off",
-  },
+  return {
+    port: Number(process.env.PORT ?? 8787),
 
-  /** Conversations are kept in the user's browser (never on the server) for this many hours. 0 = not kept. */
-  chatRetentionHours: Math.max(0, Number(process.env.CHAT_RETENTION_HOURS ?? 24)),
+    /** Optional "user:password" — protects the whole app with HTTP basic auth. */
+    basicAuth: v("APP_BASIC_AUTH") || undefined,
 
-  llm: {
-    baseUrl: trimSlash(process.env.LLM_BASE_URL) ?? "",
-    apiKey: process.env.LLM_API_KEY ?? "none",
-    model: process.env.LLM_MODEL ?? "",
-    stream: (process.env.LLM_STREAM ?? "true") !== "false",
-    maxSteps: Number(process.env.LLM_MAX_STEPS ?? 14),
-    temperature: Number(process.env.LLM_TEMPERATURE ?? 0.2),
-  },
-};
+    /** Enables the admin panel. Environment only. */
+    adminPassword: process.env.ADMIN_PASSWORD || undefined,
+
+    elastic: {
+      /** How Elasticsearch is reached: directly, or through Kibana's console proxy. */
+      connection,
+      url: esUrl ?? "http://localhost:9200",
+      apiKey: v("ELASTIC_API_KEY") ?? "",
+      /** Index patterns the model and the dashboards may query. */
+      logPatterns: list(v("LOG_INDEX_PATTERNS"), ["logs-*"]),
+      timeField: v("TIME_FIELD") || "@timestamp",
+      /** What the data means, in your words — given to the model in every conversation. */
+      logContext: logContext(),
+      dashboardsIndex: v("DASHBOARDS_INDEX") || "ai-dashboards",
+      /** Hard cap on rows any query may return. */
+      maxRows: Math.max(1, num(v("MAX_ROWS"), 1000)),
+      queryTimeoutMs: Math.max(1000, num(v("QUERY_TIMEOUT_MS"), 30000)),
+    },
+
+    kibana: {
+      /** Address the server uses to call Kibana (proxy, export, version check). */
+      url: kbUrl,
+      /** Address users' browsers use for "Open in Discover" links. Defaults to KIBANA_URL. */
+      publicUrl: trimSlash(v("KIBANA_PUBLIC_URL")) || kbUrl,
+      space: v("KIBANA_SPACE") || "",
+      /** Kibana API key; defaults to ELASTIC_API_KEY. */
+      apiKey: v("KIBANA_API_KEY") || v("ELASTIC_API_KEY") || "",
+      exportEnabled: (v("KIBANA_EXPORT") ?? "auto") !== "off",
+    },
+
+    /** Conversations are kept in the user's browser (never on the server) for this many hours. 0 = not kept. */
+    chatRetentionHours: Math.max(0, num(v("CHAT_RETENTION_HOURS"), 24)),
+
+    llm: {
+      baseUrl: trimSlash(v("LLM_BASE_URL")) ?? "",
+      apiKey: v("LLM_API_KEY") || "none",
+      /** Default model. */
+      model: v("LLM_MODEL") ?? "",
+      /** Optional allow-list of models offered in the chat. Empty = whatever the key lists. */
+      models: list(v("LLM_MODELS")),
+      stream: (v("LLM_STREAM") ?? "true") !== "false",
+      maxSteps: Math.max(1, num(v("LLM_MAX_STEPS"), 14)),
+      temperature: num(v("LLM_TEMPERATURE"), 0.2),
+    },
+  };
+}
+
+export type Config = ReturnType<typeof build>;
+export const config: Config = build();
+
+const listeners: (() => void)[] = [];
+
+/** Run `fn` after every configuration change (cache invalidation). */
+export function onConfigChange(fn: () => void) {
+  listeners.push(fn);
+}
+
+/** Recomputes the configuration in place after settings changed. */
+export function rebuildConfig() {
+  Object.assign(config, build());
+  for (const fn of listeners) fn();
+}
+
+// Pick up changes written by another replica sharing the same volume.
+setInterval(() => {
+  if (reloadIfChanged()) rebuildConfig();
+}, 10_000).unref();
 
 export function kibanaBase(url: string | undefined): string | undefined {
   if (!url) return undefined;

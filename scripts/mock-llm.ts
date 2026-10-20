@@ -63,9 +63,17 @@ function nextStep(messages: any[]) {
   };
 }
 
+app.get("/v1/models", (_req, res) => {
+  res.json({
+    object: "list",
+    data: ["mock-model", "mock-model-large", "text-embedding-3-small", "whisper-1"].map((id) => ({ id, object: "model", owned_by: "mock" })),
+  });
+});
+
 let callNo = 0;
 app.post("/v1/chat/completions", async (req, res) => {
   const step = nextStep(req.body.messages ?? []);
+  if (!step.tool && step.text) step.text += ` (ענה: ${req.body.model})`;
   const id = `chatcmpl-${++callNo}`;
   const toolCall = step.tool
     ? { id: `call_${callNo}`, type: "function", function: { name: step.tool.name, arguments: JSON.stringify(step.tool.args) } }

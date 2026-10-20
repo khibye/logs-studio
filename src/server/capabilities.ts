@@ -1,4 +1,4 @@
-import { config, kibanaBase } from "./config";
+import { config, kibanaBase, onConfigChange } from "./config";
 import { es, HttpError } from "./elastic";
 import type { Capabilities } from "../shared/recipe";
 
@@ -10,6 +10,9 @@ import type { Capabilities } from "../shared/recipe";
 
 let cache: { at: number; value: Capabilities } | null = null;
 const TTL_MS = 60_000;
+onConfigChange(() => {
+  cache = null;
+});
 
 function versionAtLeast(v: string | undefined, major: number, minor: number): boolean {
   const m = /^(\d+)\.(\d+)/.exec(v ?? "");
@@ -37,24 +40,27 @@ export async function getCapabilities(force = false): Promise<Capabilities> {
   if (!force && cache && Date.now() - cache.at < TTL_MS) return cache.value;
 
   const caps: Capabilities = {
-    elastic: { ok: false },
-    llm: { configured: Boolean(config.llm.baseUrl && config.llm.model), model: config.llm.model || undefined },
+    elastic: { ok: false, via: config.elastic.connection },
+    llm: { configured: Boolean(config.llm.baseUrl), model: config.llm.model || undefined },
     logs: { read: false, patterns: config.elastic.logPatterns },
     library: { read: false, write: false, index: config.elastic.dashboardsIndex },
     discover: { enabled: Boolean(config.kibana.publicUrl), baseUrl: kibanaBase(config.kibana.publicUrl) },
     kibanaExport: { enabled: false, experimental: true },
     chat: { retentionHours: config.chatRetentionHours },
+    admin: { enabled: Boolean(config.adminPassword) },
   };
 
-  if (!config.elastic.apiKey) {
+  const apiKey =
+    config.elastic.connection === "kibana" ? config.elastic.apiKey || config.kibana.apiKey : config.elastic.apiKey;
+  if (!apiKey) {
     caps.elastic.error = "ELASTIC_API_KEY is not set";
   } else {
     try {
       const info = await es("/");
-      caps.elastic = { ok: true, version: info?.version?.number };
+      caps.elastic = { ok: true, version: info?.version?.number, via: config.elastic.connection };
     } catch (err: any) {
       // Some read-only keys may not call "/" — the privilege check below still tells us if we're connected.
-      caps.elastic = { ok: false, error: err.message };
+      caps.elastic = { ok: false, error: err.message, via: config.elastic.connection };
     }
 
     try {
@@ -67,6 +73,7 @@ export async function getCapabilities(force = false): Promise<Capabilities> {
         },
       });
       caps.elastic.ok = true;
+      caps.elastic.error = undefined;
       const idx = priv?.index ?? {};
       const missing = config.elastic.logPatterns.filter((p) => !idx[p]?.read);
       caps.logs.read = missing.length === 0;

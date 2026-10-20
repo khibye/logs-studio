@@ -208,5 +208,21 @@ kibana.put(["/api/dashboards/:id", "/s/:space/api/dashboards/:id"], (req, res) =
   console.log("kibana dashboard", req.params.id, JSON.stringify(req.body).slice(0, 2000));
   res.json({ id: req.params.id });
 });
+// Console proxy (what Dev Tools uses): forwards to the mock Elasticsearch above.
+kibana.post("/api/console/proxy", async (req, res) => {
+  if (req.headers["kbn-xsrf"] === undefined) return res.status(400).json({ statusCode: 400, error: "Bad Request", message: "Request must contain a kbn-xsrf header." });
+  if (!String(req.headers.authorization ?? "").startsWith("ApiKey "))
+    return res.status(401).json({ statusCode: 401, error: "Unauthorized", message: "Unauthorized" });
+  if (process.env.MOCK_NO_DEVTOOLS === "1")
+    return res.status(403).json({ statusCode: 403, error: "Forbidden", message: "Forbidden" });
+  const p = String(req.query.path ?? "");
+  const method = String(req.query.method ?? "GET").toUpperCase();
+  const r = await fetch(`http://localhost:${PORT}/${p.replace(/^\//, "")}`, {
+    method,
+    headers: { "content-type": "application/json", authorization: String(req.headers.authorization) },
+    body: method === "GET" || method === "HEAD" ? undefined : JSON.stringify(req.body ?? {}),
+  });
+  res.status(r.status).setHeader("content-type", "application/json").send(await r.text());
+});
 const KPORT = Number(process.env.MOCK_KIBANA_PORT ?? 5601);
 kibana.listen(KPORT, () => console.log(`mock kibana ${KIBANA_VERSION} on http://localhost:${KPORT}`));

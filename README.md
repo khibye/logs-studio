@@ -2,7 +2,9 @@
 
 אפליקציית ווב שבה מתכתבים עם מודל AI על הלוגים באלסטיק, והוא בונה **דשבורדים חיים** תוך כדי השיחה. אפשר לשמור את הדשבורדים, לשתף אותם, לפתוח אותם שוב ולהתחיל עליהם שיחה חדשה, או ליצור מהם עותק (fork).
 
-השרת **stateless**: אין בסיס נתונים, אין sessions, ושום דבר לא נשמר בשרת בין בקשות.
+השרת **stateless** כלפי משתמשים: אין בסיס נתונים ואין sessions, ושיחות ודשבורדים לא נשמרים בשרת. הדבר היחיד שהשרת שומר הוא **הגדרות מפאנל הניהול**, בקובץ JSON אחד (ראו "פאנל ניהול").
+
+עובד גם **עם כתובת Kibana בלבד**, בלי כתובת Elasticsearch (ראו "חיבור דרך Kibana").
 
 ---
 
@@ -36,7 +38,9 @@
 | דשבורד ששמרת | **קישור**: המתכון כולו דחוס בתוך ה-URL. **קובץ JSON**: ייצוא וייבוא. **ספרייה משותפת**: אינדקס `ai-dashboards` באלסטיק, אם יש הרשאה |
 | "נפתחו לאחרונה" | localStorage של הדפדפן (נוחות אישית בלבד) |
 | הנתונים | Elasticsearch. נשלפים מחדש בכל רענון |
-| מפתחות | משתני סביבה בשרת. לעולם לא נשלחים לדפדפן |
+| מפתחות | משתני סביבה בשרת, או `settings.json` אם הוגדרו בפאנל הניהול. לעולם לא נשלחים לדפדפן |
+| הגדרות מפאנל הניהול | `DATA_DIR/settings.json` בשרת (צריך volume קבוע) |
+| המודל שנבחר בצ'אט | localStorage של הדפדפן |
 
 ## מה עובד לפי ההרשאות שיש לך
 
@@ -55,6 +59,45 @@
 - **שמור כעותק**: יוצר דשבורד חדש עם `forked_from`, שמצביע על הגרסה שממנה התחלת. המקור לא משתנה.
 - פתיחת דשבורד ממשיכה את השיחה שלך עליו, אם היא עדיין שמורה בדפדפן. אחרת מתחילה שיחה חדשה, והמודל מקבל את המתכון (כולל ה-`notes`) כהקשר. "שיחה חדשה" מוחקת את השיחה השמורה.
 - הקישור בשורת הכתובת כולל `&s=...`, המזהה של השיחה בדפדפן שלך. בדפדפן אחר אין לו משמעות, ומי שמקבל ממך קישור לא רואה את השיחה.
+
+---
+
+## בחירת מודל בצ'אט
+
+בראש הצ'אט יש רשימה של המודלים שהמפתח מחזיר (`<LLM_BASE_URL>/models`). מודלים שלא מתאימים לשיחה (embedding, whisper, tts וכד') מסוננים. אפשר להחליף מודל באמצע שיחה, ואז מתחת לכל תשובה מופיע איזה מודל ענה. הבחירה נשמרת בדפדפן.
+
+- `LLM_MODEL`: מודל ברירת המחדל, תמיד ראשון ברשימה.
+- `LLM_MODELS`: לצמצום הרשימה לכמה מודלים (מופרד בפסיקים). שימושי גם כשהשרת לא תומך ב-`/models`.
+- השרת בודק שהמודל המבוקש באמת ברשימה, כך שאי אפשר לשלוח מהדפדפן שם מודל שרירותי.
+
+## חיבור דרך Kibana (כשאין כתובת Elasticsearch)
+
+כשמוגדר רק `KIBANA_URL` (ובלי `ELASTIC_URL`), כל הקריאות לאלסטיק עוברות דרך ה-**console proxy** של Kibana, אותו endpoint ש-Dev Tools משתמש בו. כל האפליקציה עובדת כך: צ'אט, דשבורדים, ספרייה משותפת, Discover.
+
+- המפתח צריך גם **הרשאת Dev Tools ב-Kibana**. בלעדיה תופיע הודעה ברורה בסטטוס.
+- ל-Kibana יש מגבלת זמן משלה לבקשות דרך ה-proxy (בדרך כלל 30 שניות, `elasticsearch.requestTimeout`). הגדלת `QUERY_TIMEOUT_MS` לא תעזור מעבר לה.
+- `ELASTIC_CONNECTION` קובע את האופן: `auto` (ברירת מחדל: ישיר אם יש `ELASTIC_URL`, אחרת דרך Kibana), `direct` או `kibana`.
+- איך מוצאים את כתובת Elasticsearch, אם רוצים חיבור ישיר: ב-Kibana, תפריט העזרה (סימן השאלה) ← **Connection details** ← Endpoints.
+
+## פאנל ניהול
+
+`#/admin` ("ניהול" בתפריט). מופעל רק כשמוגדר `ADMIN_PASSWORD` במשתני הסביבה.
+
+- כל ההגדרות ניתנות לעריכה, חוץ מ-`PORT`, `ADMIN_PASSWORD`, `DATA_DIR` ו-`LOG_CONTEXT_FILE`, שנשארים במשתני סביבה בלבד.
+- **ערכים מהפאנל גוברים על משתני הסביבה** ומוחלים מיד, בלי הפעלה מחדש. ליד כל שדה רואים מאיפה הערך מגיע. "אפס" מחזיר לערך של משתנה הסביבה.
+- מפתחות וסיסמאות לא נשלחים לדפדפן: רואים רק `••••` וארבעה תווים אחרונים, ושדה ריק משמעו "לא לשנות".
+- "בדוק חיבור" מריץ מחדש את בדיקת ההרשאות ואת רשימת המודלים.
+- הסיסמה נשלחת בכל בקשה בכותרת, ונשמרת רק בלשונית הפתוחה (sessionStorage).
+
+### איפה ההגדרות נשמרות, ומה זה אומר על ה-pod
+
+הן נשמרות בקובץ `DATA_DIR/settings.json` (ב-Docker: `/app/data/settings.json`), בהרשאות 0600.
+
+- **בלי volume קבוע**, הקובץ נמחק בכל הפעלה מחדש או פריסה של ה-pod. האפליקציה ממשיכה לעבוד עם משתני הסביבה, אבל השינויים מהפאנל אובדים. לכן מחברים **PVC** ל-`/app/data`.
+- **כמה replicas**: עם volume מסוג ReadWriteOnce מריצים replica אחד (`strategy: Recreate`). עם volume משותף (ReadWriteMany) כל pod קורא מחדש את הקובץ תוך כ-10 שניות משינוי.
+- הקובץ מכיל מפתחות בטקסט גלוי, בדיוק כמו Secret שמותקן כקובץ. הגישה ל-volume צריכה להיות מוגבלת בהתאם.
+- דוגמה מלאה (Secret, PVC, Deployment, Service): `deploy/kubernetes.example.yaml`.
+- אם הוגדרה בטעות `APP_BASIC_AUTH` שגויה ואי אפשר להיכנס: מוחקים את `settings.json` (או את השורה שלה בקובץ) ומפעילים מחדש.
 
 ---
 
@@ -94,7 +137,12 @@ docker build -t logs-studio .
 docker run --env-file .env -p 8787:8787 logs-studio
 ```
 
-מכיוון שהשרת stateless, אפשר להריץ כמה עותקים מאחורי load balancer בלי sticky sessions.
+```bash
+# עם פאנל ניהול ושמירה קבועה של ההגדרות
+docker run --env-file .env -e ADMIN_PASSWORD=... -v logs-studio-data:/app/data -p 8787:8787 logs-studio
+```
+
+אין sessions, ולכן אין צורך ב-sticky sessions. לכמה עותקים, ראו "איפה ההגדרות נשמרות".
 
 ---
 
@@ -102,7 +150,8 @@ docker run --env-file .env -p 8787:8787 logs-studio
 
 | משתנה | ברירת מחדל | הסבר |
 |---|---|---|
-| `ELASTIC_URL` | `http://localhost:9200` | כתובת Elasticsearch |
+| `ELASTIC_CONNECTION` | `auto` | `auto` / `direct` / `kibana`. ראו "חיבור דרך Kibana" |
+| `ELASTIC_URL` | | כתובת Elasticsearch. ריק = חיבור דרך Kibana |
 | `ELASTIC_API_KEY` | | המפתח בפורמט Encoded |
 | `LOG_INDEX_PATTERNS` | `logs-*` | אילו אינדקסים מותר לשאול (רשימה מופרדת בפסיקים). כשמגדירים אינדקס אחד, המודל עובד רק עליו |
 | `LOG_CONTEXT` | | תיאור חופשי של הנתונים שהמודל מקבל בכל שיחה: מה כל שדה אומר, איך מזהים שגיאה, שמות שירותים. `\n` לשורה חדשה |
@@ -110,17 +159,21 @@ docker run --env-file .env -p 8787:8787 logs-studio
 | `TIME_FIELD` | `@timestamp` | שדה הזמן שעליו מופעל טווח הזמן |
 | `DASHBOARDS_INDEX` | `ai-dashboards` | אינדקס הספרייה המשותפת |
 | `MAX_ROWS` | `1000` | מקסימום שורות לשאילתה |
-| `KIBANA_URL` | | נדרש ל-"פתח ב-Discover" ולייצוא |
+| `QUERY_TIMEOUT_MS` | `30000` | זמן המתנה לכל קריאה לאלסטיק |
+| `KIBANA_URL` | | נדרש ל-"פתח ב-Discover", לייצוא ולחיבור דרך Kibana |
 | `KIBANA_PUBLIC_URL` | `KIBANA_URL` | אם הדפדפן מגיע ל-Kibana בכתובת אחרת מהשרת |
 | `KIBANA_SPACE` | | Space של Kibana לקישורים ולייצוא |
 | `KIBANA_EXPORT` | `auto` | `off` מכבה את הייצוא. ב-`auto` הוא נדלק רק ב-9.4 ומעלה |
 | `LLM_BASE_URL` | | למשל `https://host/v1`. כל שרת תואם OpenAI עם tool calling |
 | `LLM_API_KEY` | | |
-| `LLM_MODEL` | | שם המודל |
+| `LLM_MODEL` | | מודל ברירת המחדל |
+| `LLM_MODELS` | | המודלים לבחירה בצ'אט. ריק = כל מודלי השיחה שהמפתח מחזיר |
 | `LLM_STREAM` | `true` | `false` אם השרת מתקשה עם streaming של tool calls |
 | `LLM_MAX_STEPS` | `14` | כמה סבבים מול המודל מותרים לשאלה אחת |
 | `CHAT_RETENTION_HOURS` | `24` | כמה זמן השיחה נשמרת בדפדפן. `0` מבטל את השמירה |
 | `APP_BASIC_AUTH` | | `user:password`. מומלץ מאוד כשהאפליקציה נגישה ברשת |
+| `ADMIN_PASSWORD` | | מפעיל את פאנל הניהול. משתנה סביבה בלבד |
+| `DATA_DIR` | `./data` (ב-Docker `/app/data`) | איפה נשמר `settings.json`. משתנה סביבה בלבד |
 
 ---
 
@@ -145,6 +198,14 @@ POST /_security/api_key
 }
 ```
 
+**חיבור דרך Kibana בלבד**: המפתח צריך גם את הרשאת Dev Tools ב-Kibana. הדרך הפשוטה היא מפתח **בלי** `role_descriptors`, שמקבל את ההרשאות של המשתמש שיצר אותו (אם המשתמש יכול לפתוח Dev Tools, גם המפתח יכול). כדי לצמצם, מוסיפים ל-`logs-studio` הרשאת אפליקציה. Elastic נותנת להרשאות של Kibana שמות בתבנית `feature_<id>.<level>`, ולכן ל-Dev Tools זה כנראה `feature_dev_tools.read`. כדאי לבדוק את השם בגרסה שלכם:
+
+```
+"applications": [
+  { "application": "kibana-.kibana", "privileges": ["feature_dev_tools.read"], "resources": ["*"] }
+]
+```
+
 **עם ספרייה משותפת**: מוסיפים שורה ל-`indices`:
 
 ```
@@ -166,7 +227,8 @@ PUT /ai-dashboards
 
 - **ההרשאות של המפתח הן הגבול האמיתי.** מפתח לקריאה בלבד מבטיח שהמודל לא יכול לשנות דבר באלסטיק. ES|QL הוא ממילא שפה לקריאה בלבד.
 - בנוסף, השרת בודק כל שאילתה לפני הרצה: רק `FROM` על אינדקסים מ-`LOG_INDEX_PATTERNS`, בלי אינדקסי מערכת (`.`), עם `LOOKUP JOIN` רק לאינדקסים מותרים, ומוסיף `LIMIT` אוטומטי.
-- המפתחות נשמרים רק בשרת.
+- המפתחות נשמרים רק בשרת: במשתני סביבה, או ב-`settings.json` אם שונו בפאנל. הפאנל לא מחזיר אותם לדפדפן.
+- בחיבור דרך Kibana, ה-console proxy מאפשר באופן עקרוני כל קריאה לאלסטיק שהמפתח מורשה לה. השרת עדיין מריץ רק את מה שהקוד שלו שולח, אבל זו סיבה נוספת להגביל את המפתח לקריאה בלבד.
 - **שימי לב: תוצאות שאילתות נשלחות לספק המודל.** אם בלוגים יש מידע רגיש, כדאי להגביל שדות כבר ברמת המפתח (field-level security).
 - קישור משותף מכיל את **השאילתות**, לא את הנתונים. מי שפותח אותו רואה נתונים רק דרך השרת, כלומר רק אם יש לו גישה לאפליקציה.
 
@@ -189,8 +251,13 @@ src/server/prompt.ts      הנחיות המערכת למודל
 src/server/elastic.ts     גישה ל-Elasticsearch, הרצת ES|QL ובדיקות שאילתות
 src/server/library.ts     הספרייה המשותפת: גרסאות, עדכון, fork
 src/server/capabilities.ts בדיקת ההרשאות בפועל
+src/server/settings.ts    הגדרות: פאנל הניהול → משתני סביבה → ברירות מחדל, קובץ settings.json
+src/server/config.ts      הקונפיגורציה בפועל, מתעדכנת מיד כשהגדרות משתנות
+src/server/admin.ts       ה-API של פאנל הניהול
+src/server/llm.ts         רשימת המודלים ובחירת מודל
 src/server/kibanaExport.ts ייצוא ל-Kibana (ניסיוני)
-src/web/                  ממשק React: צ'אט, דשבורד (ECharts), ספרייה
+src/web/                  ממשק React: צ'אט, דשבורד (ECharts), ספרייה, ניהול
+deploy/                   דוגמת Kubernetes
 scripts/mock-*.ts         Elasticsearch, Kibana ומודל מזויפים לפיתוח
 ```
 
@@ -199,10 +266,13 @@ scripts/mock-*.ts         Elasticsearch, Kibana ומודל מזויפים לפי
 | | |
 |---|---|
 | `GET /api/capabilities` | מה זמין לפי ההרשאות |
-| `POST /api/chat` | `{messages, recipe, time_range}`. מחזיר אירועים בפורמט NDJSON: `text`, `tool_start`, `tool_end`, `recipe`, `error`, `done` |
+| `GET /api/models` | המודלים לבחירה בצ'אט |
+| `POST /api/chat` | `{messages, recipe, time_range, model}`. מחזיר אירועים בפורמט NDJSON: `text`, `tool_start`, `tool_end`, `recipe`, `error`, `done` |
 | `POST /api/query` | `{esql, time_range}`. מריץ שאילתה של פאנל |
 | `GET /api/dashboards?q=` | רשימת הדשבורדים (הגרסה האחרונה של כל אחד) |
 | `GET /api/dashboards/:id?version=` | מתכון |
 | `GET /api/dashboards/:id/versions` | כל הגרסאות |
 | `POST /api/dashboards` | `{recipe, mode: "new" \| "update" \| "fork"}` |
 | `POST /api/export/kibana` | `{recipe}` |
+| `GET/PUT /api/admin/settings` | הגדרות (כותרת `x-admin-password`). PUT: `{values: {KEY: "ערך" \| null}}`, כש-null מחזיר למשתנה הסביבה |
+| `POST /api/admin/test` | בדיקת חיבור ורשימת מודלים |

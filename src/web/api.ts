@@ -3,13 +3,14 @@ import type {
   ChatEvent,
   ChatMessage,
   DashboardSummary,
+  ModelsInfo,
   QueryResult,
   Recipe,
   TimeRangeKey,
 } from "../shared/recipe";
 
 export class ApiError extends Error {
-  constructor(public status: number, message: string) {
+  constructor(public status: number, message: string, public fields?: Record<string, string>) {
     super(message);
   }
 }
@@ -26,11 +27,13 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     body = text;
   }
-  if (!res.ok) throw new ApiError(res.status, body?.error ?? `שגיאה ${res.status}`);
+  if (!res.ok) throw new ApiError(res.status, body?.error ?? `שגיאה ${res.status}`, body?.fields);
   return body as T;
 }
 
 export const api = {
+  models: (refresh = false) => call<ModelsInfo>(`/api/models${refresh ? "?refresh=1" : ""}`),
+
   capabilities: (refresh = false) => call<Capabilities>(`/api/capabilities${refresh ? "?refresh=1" : ""}`),
 
   query: (esql: string, time_range: TimeRangeKey, signal?: AbortSignal) =>
@@ -54,9 +57,53 @@ export const api = {
     }),
 };
 
+// ---- Admin (password sent on each call; kept in sessionStorage by the page) ----
+
+export type SettingView = {
+  key: string;
+  group: "elastic" | "kibana" | "llm" | "app";
+  kind: "string" | "url" | "secret" | "number" | "boolean" | "list" | "text" | "enum";
+  label: string;
+  help?: string;
+  default?: string;
+  options?: string[];
+  min?: number;
+  value: string;
+  fallback: string;
+  source: "admin" | "env" | "file" | "default" | "unset";
+  isSet: boolean;
+};
+export type StorageInfo = {
+  file: string;
+  exists: boolean;
+  writable: boolean;
+  overrides: number;
+  updated_at?: string;
+  error?: string;
+};
+export type AdminSettings = { settings: SettingView[]; storage: StorageInfo };
+
+const adminHeaders = (password: string) => ({ "x-admin-password": password });
+
+export const adminApi = {
+  login: (password: string) => call<{ ok: true }>("/api/admin/login", { method: "POST", headers: adminHeaders(password) }),
+  settings: (password: string) => call<AdminSettings>("/api/admin/settings", { headers: adminHeaders(password) }),
+  save: (password: string, values: Record<string, string | null>) =>
+    call<AdminSettings>("/api/admin/settings", {
+      method: "PUT",
+      headers: adminHeaders(password),
+      body: JSON.stringify({ values }),
+    }),
+  test: (password: string) =>
+    call<{ capabilities: Capabilities; models: ModelsInfo }>("/api/admin/test", {
+      method: "POST",
+      headers: adminHeaders(password),
+    }),
+};
+
 /** Streams the agent's events (newline-delimited JSON). */
 export async function streamChat(
-  body: { messages: ChatMessage[]; recipe: Recipe | null; time_range: TimeRangeKey },
+  body: { messages: ChatMessage[]; recipe: Recipe | null; time_range: TimeRangeKey; model?: string },
   onEvent: (e: ChatEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

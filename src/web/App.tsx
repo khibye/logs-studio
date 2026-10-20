@@ -4,6 +4,7 @@ import { Header } from "./components/Header";
 import { Chat, type UiMessage } from "./components/Chat";
 import { Dashboard, type Origin } from "./components/Dashboard";
 import { Library } from "./components/Library";
+import { Admin } from "./components/Admin";
 import { navigate, replaceUrl, savedHash, useRoute, withSession } from "./route";
 import { loadChat, newSessionKey, pruneChats, saveChat } from "./chatStore";
 import {
@@ -17,11 +18,25 @@ import {
   parseRecipeFile,
   rememberRecent,
 } from "./share";
-import { contentKey, type Capabilities, type Recipe, type TimeRangeKey } from "../shared/recipe";
+import { contentKey, type Capabilities, type ModelsInfo, type Recipe, type TimeRangeKey } from "../shared/recipe";
 
 type Toast = { text: string; tone: "ok" | "bad"; href?: string; hrefLabel?: string };
 
 const newKey = () => Math.random().toString(36).slice(2, 10);
+
+const MODEL_KEY = "logs-studio:model";
+function readModelPref(): string {
+  try {
+    return localStorage.getItem(MODEL_KEY) ?? "";
+  } catch {
+    return "";
+  }
+}
+function writeModelPref(m: string) {
+  try {
+    localStorage.setItem(MODEL_KEY, m);
+  } catch {}
+}
 
 async function copyText(text: string): Promise<boolean> {
   try {
@@ -42,12 +57,13 @@ async function copyText(text: string): Promise<boolean> {
 
 function unreachableCaps(error: string): Capabilities {
   return {
-    elastic: { ok: false, error },
+    elastic: { ok: false, error, via: "direct" },
     llm: { configured: false },
     logs: { read: false, patterns: [], reason: error },
     library: { read: false, write: false, index: "ai-dashboards", reason: error },
     discover: { enabled: false },
     chat: { retentionHours: 24 },
+    admin: { enabled: false },
     kibanaExport: { enabled: false, experimental: true, reason: error },
   };
 }
@@ -68,6 +84,8 @@ export function App() {
   const [loadError, setLoadError] = useState<string | null>(null);
   const [toast, setToast] = useState<Toast | null>(null);
   const [recent, setRecent] = useState(loadRecent);
+  const [modelsInfo, setModelsInfo] = useState<ModelsInfo | null>(null);
+  const [modelPref, setModelPref] = useState(readModelPref);
   const [studioHash, setStudioHash] = useState("#/");
   const chatCtrl = useRef<AbortController | null>(null);
   const draftKey = useRef(newKey());
@@ -88,6 +106,17 @@ export function App() {
     api.capabilities(refresh).then(setCaps, (e) => setCaps(unreachableCaps(e.message)));
   }, []);
   useEffect(() => loadCaps(), [loadCaps]);
+
+  const loadModels = useCallback((refresh = false) => {
+    api.models(refresh).then(setModelsInfo, () => setModelsInfo(null));
+  }, []);
+  useEffect(() => {
+    if (caps?.llm.configured) loadModels();
+  }, [caps?.llm.configured, caps?.llm.model, loadModels]);
+
+  /** The model used for the next message: the user's pick if still offered, else the server default. */
+  const models = modelsInfo?.models ?? (caps?.llm.model ? [caps.llm.model] : []);
+  const activeModel = models.includes(modelPref) ? modelPref : modelsInfo?.default || caps?.llm.model || "";
 
   /** How long conversations are kept in this browser (server setting CHAT_RETENTION_HOURS). */
   const retention = caps?.chat?.retentionHours ?? 24;
@@ -124,7 +153,7 @@ export function App() {
   // ---- Navigation → state ----
   useEffect(() => {
     const cur = recipeRef.current;
-    if (route.name === "library") return;
+    if (route.name === "library" || route.name === "admin") return;
     if (route.name === "new") {
       if (route.fresh) {
         openRecipe(null, "new");
@@ -172,7 +201,7 @@ export function App() {
 
   // ---- State → URL (the draft always lives in the address bar) ----
   useEffect(() => {
-    if (route.name === "library" || loading || loadingRef.current) return;
+    if (route.name === "library" || route.name === "admin" || loading || loadingRef.current) return;
     let hash: string;
     if (!recipe) hash = "#/";
     else if (recipe.id && recipe.version && origin === "library" && contentKey(recipe) === savedKey)
@@ -221,7 +250,7 @@ export function App() {
     const history = [...messages.filter((m) => m.content.trim()), { role: "user" as const, content: text }]
       .slice(-40)
       .map(({ role, content }) => ({ role, content }));
-    setMessages((m) => [...m, { role: "user", content: text }, { role: "assistant", content: "", tools: [], streaming: true }]);
+    setMessages((m) => [...m, { role: "user", content: text }, { role: "assistant", content: "", tools: [], streaming: true, model: activeModel }]);
     setBusy(true);
     const ctrl = new AbortController();
     chatCtrl.current = ctrl;
@@ -234,7 +263,7 @@ export function App() {
       });
     try {
       await streamChat(
-        { messages: history, recipe: recipeRef.current, time_range: range },
+        { messages: history, recipe: recipeRef.current, time_range: range, model: activeModel || undefined },
         (ev) => {
           switch (ev.type) {
             case "text": {
@@ -355,7 +384,7 @@ export function App() {
   };
 
   const dirty = recipe ? contentKey(recipe) !== savedKey : false;
-  const view = route.name === "library" ? "library" : "studio";
+  const view = route.name === "library" ? "library" : route.name === "admin" ? "admin" : "studio";
 
   return (
     <div className="app">
@@ -377,7 +406,15 @@ export function App() {
         }}
       />
 
-      {view === "library" ? (
+      {view === "admin" ? (
+        <Admin
+          caps={caps}
+          onSaved={() => {
+            loadCaps(true);
+            loadModels(true);
+          }}
+        />
+      ) : view === "library" ? (
         <Library caps={caps} recent={recent} onRecentChange={() => setRecent(loadRecent())} onImport={importFile} />
       ) : (
         <main className="studio">
@@ -387,6 +424,12 @@ export function App() {
             hasDashboard={Boolean(recipe?.panels.length)}
             basedOn={recipe?.panels.length ? recipe.title : undefined}
             llm={caps?.llm ?? { configured: true }}
+            models={models}
+            model={activeModel}
+            onModel={(m) => {
+              setModelPref(m);
+              writeModelPref(m);
+            }}
             onSend={send}
             onStop={() => chatCtrl.current?.abort()}
             restored={restored}
