@@ -29,6 +29,8 @@ export function Library(props: {
   }, [q, canRead]);
 
   const titleOf = new Map(items?.map((i) => [i.id, i.title]) ?? []);
+  const envs = caps?.environments ?? [];
+  const envName = (id?: string) => envs.find((e) => e.id === (id || "main"))?.name ?? id;
 
   return (
     <main className="library">
@@ -123,6 +125,11 @@ export function Library(props: {
                       <a className="lib-name" href={savedHash(d.id)}>
                         {d.title}
                       </a>
+                      {envs.length > 1 && (
+                        <span className="badge env-badge" title="נפתח בסביבה הזו; אפשר להריץ אותו על כל סביבה">
+                          {envName(d.env)}
+                        </span>
+                      )}
                       {d.notes && <div className="lib-notes">{d.notes}</div>}
                       {d.forked_from && (
                         <a className="lib-fork" href={savedHash(d.forked_from.id, d.forked_from.version)}>

@@ -16,8 +16,8 @@ import path from "node:path";
  * replicas sharing one volume pick up each other's changes.
  */
 
-export type SettingKind = "string" | "url" | "secret" | "number" | "boolean" | "list" | "text" | "enum";
-export type SettingGroup = "elastic" | "kibana" | "llm" | "app";
+export type SettingKind = "string" | "url" | "secret" | "number" | "boolean" | "list" | "text" | "enum" | "environments";
+export type SettingGroup = "elastic" | "kibana" | "envs" | "llm" | "app";
 
 export type SettingDef = {
   key: string;
@@ -30,8 +30,11 @@ export type SettingDef = {
   min?: number;
 };
 
+export const MAIN_ENV = "main";
+
 export const SETTINGS: SettingDef[] = [
-  // ---- Elasticsearch ----
+  // ---- Main environment: Elasticsearch ----
+  { key: "ENV_NAME", group: "elastic", kind: "string", default: "ראשית", label: "שם הסביבה", help: "השם שמופיע בבורר הסביבות." },
   {
     key: "ELASTIC_CONNECTION",
     group: "elastic",
@@ -71,6 +74,15 @@ export const SETTINGS: SettingDef[] = [
   { key: "KIBANA_API_KEY", group: "kibana", kind: "secret", label: "API key ל-Kibana", help: "ריק = אותו מפתח של Elasticsearch." },
   { key: "KIBANA_EXPORT", group: "kibana", kind: "enum", options: ["auto", "off"], default: "auto", label: "ייצוא לדשבורד Kibana", help: "auto: פעיל רק ב-9.4 ומעלה." },
 
+  // ---- More environments ----
+  {
+    key: "ENVIRONMENTS",
+    group: "envs",
+    kind: "environments",
+    label: "סביבות נוספות",
+    help: "כל סביבה היא Elasticsearch + Kibana נפרדים. שדות שנשארים ריקים באינדקסים, שדה הזמן ותיאור הנתונים לוקחים את הערך של הסביבה הראשית.",
+  },
+
   // ---- LLM ----
   { key: "LLM_BASE_URL", group: "llm", kind: "url", label: "כתובת ה-API", help: "תואם OpenAI, למשל https://host/v1" },
   { key: "LLM_API_KEY", group: "llm", kind: "secret", label: "API key" },
@@ -87,6 +99,14 @@ export const SETTINGS: SettingDef[] = [
   { key: "LLM_TEMPERATURE", group: "llm", kind: "number", default: "0.2", min: 0, label: "Temperature" },
 
   // ---- App ----
+  {
+    key: "LIBRARY_ENV",
+    group: "app",
+    kind: "string",
+    default: MAIN_ENV,
+    label: "סביבת הספרייה המשותפת",
+    help: 'מזהה הסביבה שבה נשמרים הדשבורדים (באינדקס הספרייה). כל הסביבות משתמשות באותה ספרייה. "main" = הסביבה הראשית.',
+  },
   {
     key: "CHAT_RETENTION_HOURS",
     group: "app",
@@ -106,6 +126,56 @@ export const SETTINGS: SettingDef[] = [
 ];
 
 const DEF = new Map(SETTINGS.map((d) => [d.key, d]));
+
+export function defaultOf(key: string): string | undefined {
+  return DEF.get(key)?.default;
+}
+
+/** Fields an additional environment can set. Same names and meaning as the main environment's settings. */
+export const ENV_FIELDS = [
+  "ELASTIC_CONNECTION",
+  "ELASTIC_URL",
+  "ELASTIC_API_KEY",
+  "KIBANA_URL",
+  "KIBANA_PUBLIC_URL",
+  "KIBANA_SPACE",
+  "KIBANA_API_KEY",
+  "LOG_INDEX_PATTERNS",
+  "TIME_FIELD",
+  "LOG_CONTEXT",
+] as const;
+/** Left empty in an additional environment → taken from the main environment. */
+export const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT"]);
+
+export type EnvDef = { id: string; name: string } & Partial<Record<(typeof ENV_FIELDS)[number], string>>;
+
+/** Parses the ENVIRONMENTS setting (a JSON array). Never throws: a bad value means "no extra environments". */
+export function parseEnvironments(raw: string | undefined): EnvDef[] {
+  if (!raw?.trim()) return [];
+  try {
+    const arr = JSON.parse(raw);
+    if (!Array.isArray(arr)) return [];
+    return arr
+      .filter((e) => e && typeof e.id === "string" && typeof e.name === "string")
+      .map((e) => {
+        const out: EnvDef = { id: e.id, name: e.name };
+        for (const f of ENV_FIELDS) if (typeof e[f] === "string" && e[f] !== "") out[f] = e[f];
+        return out;
+      });
+  } catch (err: any) {
+    console.warn(`ENVIRONMENTS is not valid JSON: ${err.message}`);
+    return [];
+  }
+}
+
+function maskEnvironments(raw: string): string {
+  const envs = parseEnvironments(raw).map((e) => {
+    const copy: EnvDef = { ...e };
+    for (const f of ENV_FIELDS) if (DEF.get(f)?.kind === "secret" && copy[f]) copy[f] = mask(copy[f]);
+    return copy;
+  });
+  return envs.length ? JSON.stringify(envs) : "";
+}
 
 // ---------------------------------------------------------------------------
 
@@ -218,10 +288,11 @@ export function settingsView(): SettingView[] {
     const eff = rawValue(d.key) ?? "";
     const fb = baseValue(d.key) ?? "";
     const secret = d.kind === "secret";
+    const show = (v: string) => (secret ? mask(v) : d.kind === "environments" ? maskEnvironments(v) : v);
     return {
       ...d,
-      value: secret ? mask(eff) : eff,
-      fallback: secret ? mask(fb) : fb,
+      value: show(eff),
+      fallback: show(fb),
       source: sourceOf(d.key),
       isSet: eff !== "",
     };
@@ -277,6 +348,54 @@ function validate(def: SettingDef, v: string): string | null {
 }
 
 /**
+ * Validates an ENVIRONMENTS value from the admin panel and fills in secrets the
+ * browser left empty ("keep the current key") from the current value.
+ * Returns [normalised JSON, error].
+ */
+function normaliseEnvironments(value: string): [string, string | null] {
+  if (!value.trim()) return ["", null];
+  let arr: any;
+  try {
+    arr = JSON.parse(value);
+  } catch {
+    return ["", "JSON לא תקין"];
+  }
+  if (!Array.isArray(arr)) return ["", "צריך להיות רשימה"];
+  if (arr.length > 20) return ["", "עד 20 סביבות"];
+  const previous = new Map(parseEnvironments(rawValue("ENVIRONMENTS")).map((e) => [e.id, e]));
+  const seen = new Set<string>();
+  const out: EnvDef[] = [];
+  for (const [i, e] of arr.entries()) {
+    const where = `סביבה ${i + 1}${e?.name ? ` (${e.name})` : ""}`;
+    if (!e || typeof e !== "object") return ["", `${where}: לא תקינה`];
+    const id = String(e.id ?? "").trim();
+    if (!/^[a-z0-9][a-z0-9_-]{0,31}$/.test(id)) return ["", `${where}: מזהה צריך להיות באותיות אנגליות קטנות, ספרות, - או _`];
+    if (id === MAIN_ENV) return ["", `${where}: המזהה "${MAIN_ENV}" שמור לסביבה הראשית`];
+    if (seen.has(id)) return ["", `${where}: המזהה "${id}" כבר קיים`];
+    seen.add(id);
+    const name = String(e.name ?? "").trim();
+    if (!name || name.length > 60) return ["", `${where}: צריך שם (עד 60 תווים)`];
+    const env: EnvDef = { id, name };
+    for (const key of Object.keys(e)) {
+      if (key === "id" || key === "name") continue;
+      if (!(ENV_FIELDS as readonly string[]).includes(key)) return ["", `${where}: שדה לא מוכר ${key}`];
+    }
+    for (const f of ENV_FIELDS) {
+      const def = DEF.get(f)!;
+      let v = typeof e[f] === "string" ? e[f].trim() : "";
+      if (def.kind === "secret" && !v) v = previous.get(id)?.[f] ?? "";
+      if (!v) continue;
+      const err = validate(def, v);
+      if (err) return ["", `${where}: ${def.label}: ${err}`];
+      env[f] = def.kind === "url" ? v.replace(/\/+$/, "") : v;
+    }
+    if (!env.ELASTIC_URL && !env.KIBANA_URL) return ["", `${where}: צריך כתובת Elasticsearch או Kibana`];
+    out.push(env);
+  }
+  return [out.length ? JSON.stringify(out) : "", null];
+}
+
+/**
  * Applies changes: a string sets an override, null removes it (back to env).
  * Throws with per-key errors if anything is invalid; nothing is written then.
  */
@@ -295,6 +414,12 @@ export function updateSettings(changes: Record<string, string | null>) {
     }
     if (typeof value !== "string" || value.length > 20000) {
       errors[key] = "ערך לא תקין";
+      continue;
+    }
+    if (def.kind === "environments") {
+      const [json, err] = normaliseEnvironments(value);
+      if (err) errors[key] = err;
+      else next[key] = json;
       continue;
     }
     const err = validate(def, value);

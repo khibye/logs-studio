@@ -3,7 +3,7 @@ import { existsSync } from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { config } from "./config";
+import { config, hasEnv, MAIN_ENV, withEnv } from "./config";
 import { HttpError, runEsql } from "./elastic";
 import { getCapabilities } from "./capabilities";
 import { getDashboard, listDashboards, listVersions, saveDashboard } from "./library";
@@ -40,6 +40,16 @@ async function requireLibrary(mode: "read" | "write") {
   const ok = mode === "read" ? caps.library.read : caps.library.write;
   if (!ok) throw new HttpError(403, caps.library.reason ?? `The dashboards library is not available for ${mode}`);
 }
+
+// Every API call runs against one environment, chosen by the browser (x-env header).
+app.use("/api", (req, res, next) => {
+  const id = String(req.headers["x-env"] ?? "") || MAIN_ENV;
+  if (!hasEnv(id)) {
+    res.status(400).json({ error: `Unknown environment "${id}"` });
+    return;
+  }
+  withEnv(id, () => next());
+});
 
 app.get("/api/health", (_req, res) => {
   res.json({ ok: true });

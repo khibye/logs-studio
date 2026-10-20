@@ -27,7 +27,8 @@ const FIELDS: [string, string][] = [
   ["message", "text"],
   ["host.name", "keyword"],
 ];
-const SERVICES = ["checkout-api", "cart-svc", "user-svc", "search-api", "payments-gw"];
+const TAG = process.env.MOCK_TAG ?? ""; // e.g. "stg-" to tell a second mock environment apart
+const SERVICES = ["checkout-api", "cart-svc", "user-svc", "search-api", "payments-gw"].map((s) => TAG + s);
 const PATHS = ["/api/checkout/pay", "/api/checkout/confirm", "/api/cart", "/api/user/profile", "/api/search"];
 
 let seed = 7;
@@ -138,7 +139,7 @@ function esql(query: string) {
 const docs = new Map<string, any>();
 
 app.get("/", (_req, res) => {
-  res.json({ name: "mock", version: { number: "9.2.0" }, tagline: "You Know, for Search" });
+  res.json({ name: "mock", version: { number: process.env.MOCK_ES_VERSION ?? "9.2.0" }, tagline: "You Know, for Search" });
 });
 
 app.post("/_security/user/_has_privileges", (req, res) => {
@@ -192,6 +193,14 @@ app.put("/:index/_create/:id", (req, res) => {
   if (docs.has(req.params.id)) return res.status(409).json({ error: { type: "version_conflict_engine_exception", reason: "document already exists" } });
   docs.set(req.params.id, req.body);
   res.status(201).json({ result: "created", _id: req.params.id });
+});
+
+// Like Elasticsearch: unknown paths (e.g. Kibana's /app/discover) → "no handler found".
+app.use((req, res) => {
+  res.status(400).json({
+    error: { type: "illegal_argument_exception", reason: `no handler found for uri [${req.path}] and method [${req.method}]` },
+    status: 400,
+  });
 });
 
 app.listen(PORT, () => console.log(`mock elasticsearch on http://localhost:${PORT} (write=${WRITE})`));

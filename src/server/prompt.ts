@@ -12,6 +12,7 @@ export function systemPrompt(recipe: Recipe | null, range: TimeRangeKey): string
 
   return `You are a log-analysis assistant inside "Logs Studio", a web app on top of Elasticsearch ${"(ES|QL)"}.
 You help the user investigate their logs and you build LIVE dashboards from what you find.
+${config.environments.length > 1 ? `\nYou are connected to the environment "${config.env.name}". All queries run there. If the user switches environment, the same dashboard re-runs on the new one.\n` : ""}
 
 # How dashboards work here
 - A dashboard is a list of panels. Each panel holds an ES|QL query and how to draw its result.

@@ -128,6 +128,14 @@ export const Icon = {
       <path d="M20 12a8 8 0 0 1-11.7 7.1L4 20l1-4A8 8 0 1 1 20 12z" />
     </Svg>
   ),
+  Server: (p: P) => (
+    <Svg {...p}>
+      <rect x="4" y="4" width="16" height="7" rx="2" />
+      <rect x="4" y="13" width="16" height="7" rx="2" />
+      <path d="M8 7.5h.01" />
+      <path d="M8 16.5h.01" />
+    </Svg>
+  ),
   Logo: ({ size = 28 }: { size?: number }) => (
     <svg width={size} height={size} viewBox="0 0 28 28" fill="none" aria-hidden="true">
       <rect x="1" y="1" width="26" height="26" rx="7" fill="#15171A" />

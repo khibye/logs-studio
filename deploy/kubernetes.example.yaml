@@ -16,6 +16,9 @@ stringData:
   LLM_API_KEY: "<llm key>"
   LLM_MODEL: "<default model>"
   ADMIN_PASSWORD: "<choose a strong password>"
+  ENV_NAME: "Production"
+  # More environments — or add them later in the admin panel:
+  # ENVIRONMENTS: '[{"id":"staging","name":"Staging","ELASTIC_URL":"https://es-staging:9200","ELASTIC_API_KEY":"...","KIBANA_URL":"https://kibana-staging"}]'
 ---
 apiVersion: v1
 kind: PersistentVolumeClaim

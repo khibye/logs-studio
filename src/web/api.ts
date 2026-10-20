@@ -15,10 +15,17 @@ export class ApiError extends Error {
   }
 }
 
+/** The environment every API call runs against (sent as the x-env header). */
+let currentEnv = "";
+export function setApiEnv(id: string) {
+  currentEnv = id;
+}
+const envHeader = (): Record<string, string> => (currentEnv ? { "x-env": currentEnv } : {});
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(path, {
     ...init,
-    headers: { "Content-Type": "application/json", ...(init?.headers ?? {}) },
+    headers: { "Content-Type": "application/json", ...envHeader(), ...(init?.headers ?? {}) },
   });
   const text = await res.text();
   let body: any;
@@ -61,8 +68,8 @@ export const api = {
 
 export type SettingView = {
   key: string;
-  group: "elastic" | "kibana" | "llm" | "app";
-  kind: "string" | "url" | "secret" | "number" | "boolean" | "list" | "text" | "enum";
+  group: "elastic" | "kibana" | "envs" | "llm" | "app";
+  kind: "string" | "url" | "secret" | "number" | "boolean" | "list" | "text" | "enum" | "environments";
   label: string;
   help?: string;
   default?: string;
@@ -109,7 +116,7 @@ export async function streamChat(
 ): Promise<void> {
   const res = await fetch("/api/chat", {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers: { "Content-Type": "application/json", ...envHeader() },
     body: JSON.stringify(body),
     signal,
   });

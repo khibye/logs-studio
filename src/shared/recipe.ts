@@ -70,6 +70,8 @@ export const RecipeSchema = z.object({
   /** Short summary written by the model: what was analysed and why. Gives a new chat its context. */
   notes: z.string().max(2000).default(""),
   time_range: z.enum(TIME_RANGE_KEYS as [TimeRangeKey, ...TimeRangeKey[]]).default("24h"),
+  /** Environment the dashboard opens on by default. The same dashboard can run on any environment. */
+  env: z.string().max(40).optional(),
   panels: z.array(PanelSchema).max(24),
 });
 export type Recipe = z.infer<typeof RecipeSchema>;
@@ -93,16 +95,20 @@ export type DashboardSummary = {
   panel_count: number;
   versions: number;
   forked_from?: Ref;
+  env?: string;
 };
 
 export type Capabilities = {
   elastic: { ok: boolean; version?: string; error?: string; via: "direct" | "kibana" };
   llm: { configured: boolean; model?: string };
   logs: { read: boolean; patterns: string[]; reason?: string };
-  library: { read: boolean; write: boolean; index: string; reason?: string };
-  discover: { enabled: boolean; baseUrl?: string };
+  library: { read: boolean; write: boolean; index: string; reason?: string; env?: string };
+  discover: { enabled: boolean; baseUrl?: string; reason?: string };
   chat: { retentionHours: number };
   admin: { enabled: boolean };
+  /** The environment these capabilities describe, and all environments to choose from. */
+  env: { id: string; name: string };
+  environments: { id: string; name: string }[];
   kibanaExport: { enabled: boolean; experimental: true; reason?: string; kibanaVersion?: string };
 };
 

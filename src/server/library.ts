@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { config } from "./config";
-import { es, HttpError } from "./elastic";
+import { config, withEnv } from "./config";
+import { es as rawEs, HttpError } from "./elastic";
 import { RecipeSchema, type DashboardSummary, type Recipe } from "../shared/recipe";
 
 /**
@@ -26,8 +26,15 @@ type Doc = {
   panel_count: number;
   forked_from_id?: string;
   forked_from_version?: number;
+  /** Environment the dashboard opens on by default. */
+  env?: string;
   recipe_json: string;
 };
+
+/** The library lives in one environment (LIBRARY_ENV), whichever environment the user is looking at. */
+function es<T = any>(path: string, opts?: Parameters<typeof rawEs>[1]): Promise<T> {
+  return withEnv(config.libraryEnv, () => rawEs<T>(path, opts));
+}
 
 const idx = () => encodeURIComponent(config.elastic.dashboardsIndex);
 const docId = (id: string, v: number) => encodeURIComponent(`${id}__v${v}`);
@@ -41,6 +48,7 @@ function summary(d: Doc, versions = 1): DashboardSummary {
     saved_at: d.saved_at,
     panel_count: d.panel_count,
     versions,
+    env: d.env,
     forked_from:
       d.forked_from_id && d.forked_from_version
         ? { id: d.forked_from_id, version: d.forked_from_version }
@@ -158,6 +166,7 @@ export async function saveDashboard(input: Recipe, mode: SaveMode): Promise<Reci
     panel_count: recipe.panels.length,
     forked_from_id: forked_from?.id,
     forked_from_version: forked_from?.version,
+    env: recipe.env,
     recipe_json: JSON.stringify(content),
   };
 

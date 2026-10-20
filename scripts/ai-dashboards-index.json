@@ -11,6 +11,7 @@
       "panel_count": { "type": "integer" },
       "forked_from_id": { "type": "keyword" },
       "forked_from_version": { "type": "integer" },
+      "env": { "type": "keyword" },
       "recipe_json": { "type": "text", "index": false }
     }
   }

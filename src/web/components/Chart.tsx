@@ -178,7 +178,7 @@ function optionFor(
   };
 }
 
-export function Chart({ panel, data, height }: { panel: Panel; data: QueryResult; height: number }) {
+export function Chart({ panel, data, height, colorScope }: { panel: Panel; data: QueryResult; height: number; colorScope?: string }) {
   const ref = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
   // Color follows the entity, not its rank: a series keeps its slot across refreshes.
@@ -208,7 +208,7 @@ export function Chart({ panel, data, height }: { panel: Panel; data: QueryResult
 
   useEffect(() => {
     slots.current.clear();
-  }, [panel.esql, panel.series, panel.y?.join(",")]);
+  }, [panel.esql, panel.series, panel.y?.join(","), colorScope]);
 
   useEffect(() => {
     chart.current?.setOption(optionFor(panel, data, colorOf), { notMerge: true });

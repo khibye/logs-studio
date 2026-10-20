@@ -2,13 +2,15 @@ import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { adminApi, ApiError, type AdminSettings, type SettingView } from "../api";
 import { Icon } from "./icons";
 import { CapsList } from "./Header";
+import { EnvEditor, initialEnvs } from "./EnvEditor";
 import type { Capabilities, ModelsInfo } from "../../shared/recipe";
 
 const PW_KEY = "logs-studio:admin";
 
 const GROUPS: { id: SettingView["group"]; title: string; hint?: string }[] = [
-  { id: "elastic", title: "Elasticsearch" },
-  { id: "kibana", title: "Kibana" },
+  { id: "elastic", title: "סביבה ראשית · Elasticsearch" },
+  { id: "kibana", title: "סביבה ראשית · Kibana" },
+  { id: "envs", title: "סביבות נוספות" },
   { id: "llm", title: "מודל AI" },
   { id: "app", title: "אפליקציה" },
 ];
@@ -35,8 +37,11 @@ function writePw(pw: string) {
   } catch {}
 }
 
+let DEFS = new Map<string, SettingView>();
+
 /** What the editor shows for a setting before any edit. Secrets start empty (type to replace). */
-const initial = (s: SettingView) => (s.kind === "secret" ? "" : s.value);
+const initial = (s: SettingView) =>
+  s.kind === "secret" ? "" : s.kind === "environments" ? initialEnvs(s.value, DEFS) : s.value;
 
 function Field(props: {
   s: SettingView;
@@ -58,7 +63,9 @@ function Field(props: {
   };
 
   let input;
-  if (s.kind === "text") {
+  if (s.kind === "environments") {
+    input = <EnvEditor value={value} masked={s.value} defs={DEFS} disabled={reset} onChange={onChange} />;
+  } else if (s.kind === "text") {
     input = <textarea {...common} className="input area" rows={5} value={value} onChange={(e) => onChange(e.target.value)} />;
   } else if (s.kind === "enum" || s.kind === "boolean") {
     const opts = s.kind === "boolean" ? ["true", "false"] : s.options ?? [];
@@ -89,7 +96,9 @@ function Field(props: {
   }
 
   return (
-    <div className={`field ${changed ? "changed" : ""} ${error ? "has-error" : ""}`}>
+    <div
+      className={`field ${changed ? "changed" : ""} ${error ? "has-error" : ""} ${s.kind === "environments" ? "wide envs-field" : ""}`}
+    >
       <div className="field-head">
         <label htmlFor={id}>{s.label}</label>
         <code dir="ltr" className="field-key">
@@ -151,6 +160,7 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
     setError(undefined);
     return adminApi.settings(password).then(
       (d) => {
+        DEFS = new Map(d.settings.map((x) => [x.key, x]));
         setData(d);
         setDraft(Object.fromEntries(d.settings.map((s) => [s.key, initial(s)])));
         setResets(new Set());
@@ -198,6 +208,7 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
     setFieldErrors({});
     try {
       const d = await adminApi.save(pw, changes);
+      DEFS = new Map(d.settings.map((x) => [x.key, x]));
       setData(d);
       setDraft(Object.fromEntries(d.settings.map((s) => [s.key, initial(s)])));
       setResets(new Set());

@@ -266,7 +266,7 @@ button.menu-item { justify-content: flex-start; }
 .fields { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 18px 22px; }
 @media (max-width: 760px) { .fields { grid-template-columns: minmax(0, 1fr); } }
 .field { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
-.field:has(textarea) { grid-column: 1 / -1; }
+.field:has(textarea), .field.wide { grid-column: 1 / -1; }
 .field-head { display: flex; align-items: baseline; justify-content: space-between; gap: 8px; }
 .field-head label { font-weight: 600; font-size: 13.5px; }
 .field-key { font-size: 11px; color: var(--muted); background: transparent; border: 0; padding: 0; }
@@ -285,3 +285,14 @@ select.input { padding: 0 10px; }
 .badge.warn { color: var(--warn-ink); background: var(--warn-bg); border-color: transparent; }
 .link-btn { border: 0; background: none; padding: 0 2px; color: var(--accent); font-size: 12px; cursor: pointer; text-decoration: underline; }
 .savebar { position: fixed; bottom: 0; inset-inline: 0; z-index: 25; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px max(24px, calc((100vw - 980px) / 2 + 24px)); background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -6px 20px rgba(21, 23, 26, 0.06); }
+
+/* ---- Environments ---- */
+.env-pick { max-width: 220px; }
+.env-pick select { max-width: 170px; font-weight: 600; }
+.env-badge { margin-inline-start: 8px; vertical-align: 2px; }
+.envs { display: flex; flex-direction: column; gap: 14px; align-items: flex-start; }
+.envs > p { margin: 0; }
+.env-card { width: 100%; border: 1px solid var(--border); border-radius: 12px; padding: 14px 16px 16px; background: var(--surface-2); }
+.env-card-head { display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }
+.env-card .input { background: var(--surface); }
+.envs-field.changed .env-card .input { border-color: var(--border-strong); background: var(--surface); }

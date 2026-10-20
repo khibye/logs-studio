@@ -272,6 +272,7 @@ export function Dashboard(props: {
             range={range}
             tick={tick}
             discoverBase={caps?.discover.enabled ? caps.discover.baseUrl : undefined}
+            envId={caps?.env.id}
             onRemove={() => actions.removePanel(p.id)}
           />
         ))}

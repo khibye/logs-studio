@@ -32,6 +32,7 @@ export function CapsList({ caps }: { caps: Capabilities }) {
   const via = caps.elastic.via === "kibana" ? " (דרך Kibana)" : "";
   return (
     <ul className="caps-list">
+      {caps.environments.length > 1 && <Row ok={true} title={`סביבה: ${caps.env.name}`} />}
       <Row ok={caps.elastic.ok} title={`Elasticsearch ${caps.elastic.version ?? ""}${via}`} detail={caps.elastic.error} />
       <Row ok={caps.logs.read} title={`קריאת לוגים: ${caps.logs.patterns.join(", ")}`} detail={caps.logs.reason} />
       <Row ok={caps.llm.configured} title="מודל AI" detail={caps.llm.model} />
@@ -47,7 +48,7 @@ export function CapsList({ caps }: { caps: Capabilities }) {
         detail={caps.library.reason}
       />
       <Row ok={true} title="שמירה בקישור ובקובץ JSON" />
-      <Row ok={caps.discover.enabled} title="פתיחה ב-Discover" detail={caps.discover.enabled ? undefined : "KIBANA_URL is not set"} />
+      <Row ok={caps.discover.enabled} title="פתיחה ב-Discover" detail={caps.discover.reason} />
       <Row ok={caps.kibanaExport.enabled} title="ייצוא לדשבורד Kibana (ניסיוני)" detail={caps.kibanaExport.reason} />
     </ul>
   );
@@ -93,7 +94,27 @@ function Status({ caps, onRecheck }: { caps: Capabilities | null; onRecheck: () 
   );
 }
 
+function EnvPicker({ caps, envId, onEnv }: { caps: Capabilities | null; envId: string; onEnv: (id: string) => void }) {
+  const envs = caps?.environments ?? [];
+  if (envs.length < 2) return null;
+  return (
+    <label className="select env-pick" title="סביבה">
+      <Icon.Server size={15} />
+      <span className="sr-only">סביבה</span>
+      <select value={envId} onChange={(e) => onEnv(e.target.value)}>
+        {envs.map((e) => (
+          <option key={e.id} value={e.id}>
+            {e.name}
+          </option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
 export function Header(props: {
+  envId: string;
+  onEnv: (id: string) => void;
   view: "studio" | "library" | "admin";
   studioHref: string;
   caps: Capabilities | null;
@@ -128,6 +149,7 @@ export function Header(props: {
         <Icon.Plus size={16} /> חדש
       </a>
       <div className="spacer" />
+      <EnvPicker caps={caps} envId={props.envId} onEnv={props.onEnv} />
       {view === "studio" && (
         <div className="controls">
           <label className="select">

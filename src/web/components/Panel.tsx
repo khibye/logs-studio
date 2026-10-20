@@ -68,9 +68,10 @@ export function PanelView(props: {
   range: TimeRangeKey;
   tick: number;
   discoverBase?: string;
+  envId?: string;
   onRemove: () => void;
 }) {
-  const { panel, range, tick, discoverBase, onRemove } = props;
+  const { panel, range, tick, discoverBase, envId, onRemove } = props;
   const [state, setState] = useState<State>({ loading: panel.type !== "text" });
   const [showQuery, setShowQuery] = useState(false);
   const [showData, setShowData] = useState(false);
@@ -159,7 +160,7 @@ export function PanelView(props: {
           אין נתונים בטווח הזמן הזה
         </div>
       ) : (
-        <Chart panel={panel} data={state.data} height={height} />
+        <Chart panel={panel} data={state.data} height={height} colorScope={envId} />
       )}
 
       {showQuery && panel.esql && (

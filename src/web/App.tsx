@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { api, streamChat } from "./api";
+import { api, setApiEnv, streamChat } from "./api";
 import { Header } from "./components/Header";
 import { Chat, type UiMessage } from "./components/Chat";
 import { Dashboard, type Origin } from "./components/Dashboard";
@@ -23,6 +23,21 @@ import { contentKey, type Capabilities, type ModelsInfo, type Recipe, type TimeR
 type Toast = { text: string; tone: "ok" | "bad"; href?: string; hrefLabel?: string };
 
 const newKey = () => Math.random().toString(36).slice(2, 10);
+
+const ENV_KEY = "logs-studio:env";
+const MAIN_ENV = "main";
+function readEnvPref(): string {
+  try {
+    return localStorage.getItem(ENV_KEY) || MAIN_ENV;
+  } catch {
+    return MAIN_ENV;
+  }
+}
+function writeEnvPref(id: string) {
+  try {
+    localStorage.setItem(ENV_KEY, id);
+  } catch {}
+}
 
 const MODEL_KEY = "logs-studio:model";
 function readModelPref(): string {
@@ -64,6 +79,8 @@ function unreachableCaps(error: string): Capabilities {
     discover: { enabled: false },
     chat: { retentionHours: 24 },
     admin: { enabled: false },
+    env: { id: MAIN_ENV, name: "" },
+    environments: [],
     kibanaExport: { enabled: false, experimental: true, reason: error },
   };
 }
@@ -102,10 +119,42 @@ export function App() {
     return () => clearTimeout(id);
   }, [toast]);
 
-  const loadCaps = useCallback((refresh = false) => {
-    api.capabilities(refresh).then(setCaps, (e) => setCaps(unreachableCaps(e.message)));
+  /** Environment for every API call. Chosen in the header; a dashboard can switch it when opened. */
+  const [envId, setEnvIdState] = useState(() => {
+    const id = readEnvPref();
+    setApiEnv(id);
+    return id;
+  });
+  const envRef = useRef(envId);
+  const setEnvId = useCallback((id: string) => {
+    if (id === envRef.current) return;
+    envRef.current = id;
+    setApiEnv(id);
+    writeEnvPref(id);
+    setEnvIdState(id);
+    setCaps(null);
+    setTick((t) => t + 1); // re-run every panel on the new environment
+    setRecipe((cur) => (cur ? { ...cur, env: id } : cur));
   }, []);
-  useEffect(() => loadCaps(), [loadCaps]);
+
+  const loadCaps = useCallback((refresh = false) => {
+    const asked = envRef.current;
+    api.capabilities(refresh).then(
+      (c) => {
+        if (asked === envRef.current) setCaps(c);
+      },
+      (e) => {
+        if (asked !== envRef.current) return;
+        if (e.status === 400 && /Unknown environment/.test(e.message) && asked !== MAIN_ENV) {
+          setToast({ tone: "bad", text: `הסביבה "${asked}" לא מוגדרת כאן. עברתי לסביבה הראשית.` });
+          setEnvId(MAIN_ENV);
+          return;
+        }
+        setCaps(unreachableCaps(e.message));
+      },
+    );
+  }, [setEnvId]);
+  useEffect(() => loadCaps(), [loadCaps, envId]);
 
   const loadModels = useCallback((refresh = false) => {
     api.models(refresh).then(setModelsInfo, () => setModelsInfo(null));
@@ -147,8 +196,9 @@ export function App() {
     setOrigin(o);
     setLoadError(null);
     if (r) setRange(r.time_range);
+    if (r?.env) setEnvId(r.env);
     draftKey.current = r?.id ?? newKey();
-  }, [restoreChat]);
+  }, [restoreChat, setEnvId]);
 
   // ---- Navigation → state ----
   useEffect(() => {
@@ -283,7 +333,7 @@ export function App() {
               }));
               break;
             case "recipe":
-              setRecipe(ev.recipe);
+              setRecipe({ ...ev.recipe, env: envRef.current });
               setRange(ev.recipe.time_range);
               break;
             case "error":
@@ -392,6 +442,8 @@ export function App() {
         דלג לשיחה
       </a>
       <Header
+        envId={envId}
+        onEnv={setEnvId}
         view={view}
         studioHref={studioHash}
         caps={caps}
