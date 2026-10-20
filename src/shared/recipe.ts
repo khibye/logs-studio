@@ -11,13 +11,27 @@ export const PANEL_TYPES = ["metric", "line", "area", "bar", "hbar", "table", "t
 export type PanelType = (typeof PANEL_TYPES)[number];
 
 export const TIME_RANGES = {
-  "15m": { label: "15 דקות אחרונות", from: "now-15m" },
-  "1h": { label: "שעה אחרונה", from: "now-1h" },
-  "12h": { label: "12 שעות אחרונות", from: "now-12h" },
-  "24h": { label: "24 שעות אחרונות", from: "now-24h" },
-  "7d": { label: "7 ימים אחרונים", from: "now-7d" },
-  "30d": { label: "30 ימים אחרונים", from: "now-30d" },
+  "15m": { label: "15 דקות אחרונות", from: "now-15m", ms: 15 * 60e3, prevLabel: "מרבע השעה הקודמת" },
+  "1h": { label: "שעה אחרונה", from: "now-1h", ms: 3600e3, prevLabel: "מהשעה הקודמת" },
+  "12h": { label: "12 שעות אחרונות", from: "now-12h", ms: 12 * 3600e3, prevLabel: "מ-12 השעות הקודמות" },
+  "24h": { label: "24 שעות אחרונות", from: "now-24h", ms: 24 * 3600e3, prevLabel: "מאתמול" },
+  "7d": { label: "7 ימים אחרונים", from: "now-7d", ms: 7 * 86400e3, prevLabel: "מהשבוע הקודם" },
+  "30d": { label: "30 ימים אחרונים", from: "now-30d", ms: 30 * 86400e3, prevLabel: "מ-30 הימים הקודמים" },
 } as const;
+
+/** "previous" = the same-length period just before; "week" = the same time a week earlier. */
+export type Compare = "previous" | "week";
+export const WEEK_MS = 7 * 86400e3;
+/** How far back a comparison is shifted. */
+export function compareShiftMs(range: TimeRangeKey, compare: Compare): number {
+  return compare === "week" ? WEEK_MS : TIME_RANGES[range].ms;
+}
+/** Time charts compare with last week when the range fits in a week, otherwise with the previous period. */
+export function chartCompare(range: TimeRangeKey): Compare {
+  return TIME_RANGES[range].ms <= WEEK_MS ? "week" : "previous";
+}
+
+export type Annotation = { time: string; label: string };
 export type TimeRangeKey = keyof typeof TIME_RANGES;
 export const TIME_RANGE_KEYS = Object.keys(TIME_RANGES) as TimeRangeKey[];
 
@@ -109,6 +123,7 @@ export type Capabilities = {
   /** The environment these capabilities describe, and all environments to choose from. */
   env: { id: string; name: string };
   environments: { id: string; name: string }[];
+  deploys: { enabled: boolean };
   kibanaExport: { enabled: boolean; experimental: true; reason?: string; kibanaVersion?: string };
 };
 

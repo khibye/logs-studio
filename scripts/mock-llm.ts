@@ -48,6 +48,18 @@ const dashboard = (broken: boolean) => ({
   ],
 });
 
+function focusStep(messages: any[], tools: any[]) {
+  const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
+  const text = String(messages[lastUserIdx]?.content ?? "");
+  const n = messages.slice(lastUserIdx + 1).filter((m) => m.role === "tool").length;
+  const iso = text.match(/\d{4}-\d{2}-\d{2}T[\d:.]+Z/g) ?? [];
+  const hasDeploys = tools.some((t) => t.function?.name === "list_deploys");
+  if (n === 0)
+    return { tool: { name: "run_esql", args: { query: "FROM logs-* | STATS c = COUNT(*) BY service.name | SORT c DESC", from: iso[0], to: iso[1] } } };
+  if (n === 1 && hasDeploys) return { tool: { name: "list_deploys", args: { from: iso[0] } } };
+  return { text: `בחלון שבחרת רוב השגיאות מגיעות מ-\`checkout-api\`.${hasDeploys ? " דקות לפני כן הייתה פריסה של checkout-api v3.8.0, שהיא כנראה הסיבה." : ""}` };
+}
+
 function nextStep(messages: any[]) {
   const toolMsgs = messages.filter((m) => m.role === "tool");
   const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
@@ -72,7 +84,11 @@ app.get("/v1/models", (_req, res) => {
 
 let callNo = 0;
 app.post("/v1/chat/completions", async (req, res) => {
-  const step = nextStep(req.body.messages ?? []);
+  const msgs = req.body.messages ?? [];
+  const lastUser = String(msgs[msgs.map((m: any) => m.role).lastIndexOf("user")]?.content ?? "");
+  const step: { text?: string; tool?: { name: string; args: any } } = lastUser.startsWith("נתח את הנקודה")
+    ? focusStep(msgs, req.body.tools ?? [])
+    : nextStep(msgs);
   if (!step.tool && step.text) step.text += ` (ענה: ${req.body.model})`;
   const id = `chatcmpl-${++callNo}`;
   const toolCall = step.tool

@@ -52,6 +52,21 @@ export async function listModels(force = false): Promise<ModelsInfo> {
   return value;
 }
 
+/** Every chat model the key offers, ignoring LLM_MODELS (for the admin page's picker). */
+export async function listAvailableModels(): Promise<{ models: string[]; error?: string }> {
+  if (!config.llm.baseUrl) return { models: [], error: "LLM_BASE_URL is not set" };
+  try {
+    const ids: string[] = [];
+    for await (const m of llmClient().models.list({ timeout: 15_000 })) {
+      if (m?.id) ids.push(m.id);
+      if (ids.length >= 500) break;
+    }
+    return { models: ids.filter((id) => !NOT_CHAT.test(id)).sort((a, b) => a.localeCompare(b)) };
+  } catch (err: any) {
+    return { models: [], error: `Could not list models: ${err?.status ? `HTTP ${err.status} ` : ""}${err?.message ?? err}` };
+  }
+}
+
 /** Validates a model requested by the browser; falls back to the default. */
 export async function resolveModel(requested: string | undefined): Promise<string> {
   const def = config.llm.model;

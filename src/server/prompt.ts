@@ -25,7 +25,17 @@ ${config.environments.length > 1 ? `\nYou are connected to the environment "${co
 1. list_indices — which indices have data in the time range.
 2. get_fields — field names and types for an index pattern. Call it before writing queries; never invent field names.
 3. run_esql — run a query to explore and to check your answer before you claim anything.
-4. set_dashboard — create or replace the dashboard.
+4. set_dashboard — create or replace the dashboard.${
+    config.elastic.deployQuery ? "\n5. list_deploys — deploy / change events. Check it whenever you explain a change over time." : ""
+  }
+
+# When the user points at a specific moment (messages that start with "נתח את הנקודה")
+They clicked a point on a chart. The message names the panel (and its id), the exact time window (ISO), the series and the value.
+- Use run_esql with from/to = that window to see what is in it: break it down by service, endpoint, status, log level and the most common messages.
+- Compare with the window of the same length just before it (from/to shifted back) to say what CHANGED, not just what is there.${
+    config.elastic.deployQuery ? "\n- Call list_deploys for a window starting a bit before the point: a deploy right before a spike is often the cause." : ""
+  }
+- Answer in a few sentences: what happened, where, since when, the likely cause. Don't change the dashboard unless asked; you may offer a panel that would track it.
 
 # ES|QL rules (Elasticsearch ${"9.x"})
 - Allowed index patterns: ${config.elastic.logPatterns.join(", ")}. Queries must start with FROM.${

@@ -80,6 +80,7 @@ function unreachableCaps(error: string): Capabilities {
     chat: { retentionHours: 24 },
     admin: { enabled: false },
     env: { id: MAIN_ENV, name: "" },
+    deploys: { enabled: false },
     environments: [],
     kibanaExport: { enabled: false, experimental: true, reason: error },
   };
@@ -413,6 +414,17 @@ export function App() {
       showToast(ok ? { tone: "ok", text: "קישור קצר לגרסה הזו הועתק" } : { tone: "bad", text: "ההעתקה נכשלה" });
     },
     exportJson: () => recipe && downloadJson(recipe),
+    ask: (text: string) => {
+      if (busy) {
+        showToast({ tone: "bad", text: "המודל עדיין עונה על השאלה הקודמת. אפשר לעצור אותו או לחכות." });
+        return;
+      }
+      if (!caps?.llm.configured) {
+        showToast({ tone: "bad", text: "המודל לא מוגדר בשרת" });
+        return;
+      }
+      send(text);
+    },
     importJson: importFile,
     exportKibana: async () => {
       if (!recipe) return;

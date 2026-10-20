@@ -1,5 +1,5 @@
 import { config } from "./config";
-import { TIME_RANGES, type QueryResult, type TimeRangeKey } from "../shared/recipe";
+import { TIME_RANGES, compareShiftMs, type Annotation, type Compare, type QueryResult, type TimeRangeKey } from "../shared/recipe";
 
 export class HttpError extends Error {
   constructor(public status: number, message: string, public details?: unknown) {
@@ -120,7 +120,7 @@ function stripComments(q: string): string {
   return q.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
 }
 
-export function guardEsql(raw: string): string {
+export function guardEsql(raw: string, opts: { trusted?: boolean } = {}): string {
   const query = raw.trim().replace(/;+\s*$/, "");
   if (!query) throw new HttpError(400, "Empty query");
   if (query.length > 4000) throw new HttpError(400, "Query is too long (max 4000 characters)");
@@ -129,16 +129,18 @@ export function guardEsql(raw: string): string {
   const first = clean.split("|")[0].trim();
   const m = /^FROM\s+([\s\S]+?)(?:\s+METADATA\s+[\s\S]*)?$/i.exec(first);
   if (!m) throw new HttpError(400, "Only queries that start with FROM are allowed");
-  const sources = m[1].split(",").map((s) => s.trim()).filter(Boolean);
-  const blocked = sources.filter((s) => !sourceAllowed(s));
-  if (blocked.length)
-    throw new HttpError(
-      400,
-      `Index pattern not allowed: ${blocked.join(", ")}. Allowed: ${config.elastic.logPatterns.join(", ")}`,
-    );
-
-  for (const j of clean.matchAll(/\bLOOKUP\s+JOIN\s+([^\s|]+)/gi)) {
-    if (!sourceAllowed(j[1])) throw new HttpError(400, `LOOKUP JOIN on ${j[1]} is not allowed`);
+  // Admin-written queries (e.g. the deploy events query) may read indices outside LOG_INDEX_PATTERNS.
+  if (!opts.trusted) {
+    const sources = m[1].split(",").map((s) => s.trim()).filter(Boolean);
+    const blocked = sources.filter((s) => !sourceAllowed(s));
+    if (blocked.length)
+      throw new HttpError(
+        400,
+        `Index pattern not allowed: ${blocked.join(", ")}. Allowed: ${config.elastic.logPatterns.join(", ")}`,
+      );
+    for (const j of clean.matchAll(/\bLOOKUP\s+JOIN\s+([^\s|]+)/gi)) {
+      if (!sourceAllowed(j[1])) throw new HttpError(400, `LOOKUP JOIN on ${j[1]} is not allowed`);
+    }
   }
 
   const max = config.elastic.maxRows;
@@ -149,39 +151,52 @@ export function guardEsql(raw: string): string {
   return `${query}\n| LIMIT ${max}`;
 }
 
-function rangeFilter(range: TimeRangeKey) {
-  const from = TIME_RANGES[range]?.from ?? "now-24h";
-  return { range: { [config.elastic.timeField]: { gte: from, lte: "now" } } };
+const MAX_WINDOW_MS = 400 * 86400e3;
+
+/** The absolute time window a query runs on. */
+export function queryWindow(
+  range: TimeRangeKey,
+  opts: { compare?: Compare; window?: { from: number; to: number } } = {},
+): { start: number; end: number } {
+  if (opts.window) {
+    const { from, to } = opts.window;
+    if (!Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > MAX_WINDOW_MS)
+      throw new HttpError(400, "Invalid time window");
+    return { start: from, end: to };
+  }
+  const dur = TIME_RANGES[range]?.ms ?? TIME_RANGES["24h"].ms;
+  const end = Date.now() - (opts.compare ? compareShiftMs(range, opts.compare) : 0);
+  return { start: end - dur, end };
 }
 
-const DURATION_MS: Record<TimeRangeKey, number> = {
-  "15m": 15 * 60e3,
-  "1h": 60 * 60e3,
-  "12h": 12 * 3600e3,
-  "24h": 24 * 3600e3,
-  "7d": 7 * 86400e3,
-  "30d": 30 * 86400e3,
-};
-
 /**
- * Runs a guarded ES|QL query. The dashboard's time range is applied as a DSL
- * filter, so queries never hard-code dates. Queries may also use the same
+ * Runs a guarded ES|QL query. The time window (the dashboard's range, shifted
+ * back for comparisons, or an explicit window) is applied as a filter on the
+ * time field, so queries never hard-code dates. Queries may use the same
  * ?_tstart / ?_tend parameters Kibana uses, e.g. BUCKET(@timestamp, 50, ?_tstart, ?_tend).
  */
 export async function runEsql(
   query: string,
   range: TimeRangeKey,
-  opts: { signal?: AbortSignal; maxRows?: number } = {},
+  opts: {
+    signal?: AbortSignal;
+    maxRows?: number;
+    compare?: Compare;
+    window?: { from: number; to: number };
+    trusted?: boolean;
+  } = {},
 ): Promise<QueryResult> {
-  let guarded = guardEsql(query);
+  let guarded = guardEsql(query, { trusted: opts.trusted });
   if (opts.maxRows && opts.maxRows < config.elastic.maxRows) guarded += `\n| LIMIT ${opts.maxRows}`;
 
-  const body: any = { query: guarded, filter: rangeFilter(range) };
-  if (/\?_tstart|\?_tend/.test(guarded)) {
-    const end = Date.now();
-    const start = end - (DURATION_MS[range] ?? DURATION_MS["24h"]);
-    body.params = [{ _tstart: new Date(start).toISOString() }, { _tend: new Date(end).toISOString() }];
-  }
+  const { start, end } = queryWindow(range, opts);
+  const startIso = new Date(start).toISOString();
+  const endIso = new Date(end).toISOString();
+  const body: any = {
+    query: guarded,
+    filter: { range: { [config.elastic.timeField]: { gte: startIso, lte: endIso } } },
+  };
+  if (/\?_tstart|\?_tend/.test(guarded)) body.params = [{ _tstart: startIso }, { _tend: endIso }];
   const t0 = Date.now();
   const res = await es<{ columns: { name: string; type: string }[]; values: unknown[][]; took?: number }>(
     "/_query?format=json",
@@ -193,4 +208,28 @@ export async function runEsql(
     took: res.took ?? Date.now() - t0,
     truncated: (res.values?.length ?? 0) >= config.elastic.maxRows,
   };
+}
+
+/** Deploy / change events for annotations, from the environment's DEPLOY_QUERY. */
+export async function deployEvents(
+  range: TimeRangeKey,
+  opts: { signal?: AbortSignal; window?: { from: number; to: number } } = {},
+): Promise<Annotation[]> {
+  const q = config.elastic.deployQuery;
+  if (!q) return [];
+  const res = await runEsql(q, range, { ...opts, trusted: true, maxRows: 300 });
+  const ti = res.columns.findIndex((c) => c.type === "date" || c.type === "date_nanos");
+  if (ti < 0) throw new HttpError(400, "The deploy query must return a date column (e.g. KEEP @timestamp, …)");
+  return res.values
+    .filter((row) => row[ti])
+    .map((row) => ({
+      time: String(row[ti]),
+      label: row
+        .filter((_, i) => i !== ti)
+        .filter((v) => v !== null && v !== undefined && v !== "")
+        .map(String)
+        .join(" · ")
+        .slice(0, 200),
+    }))
+    .sort((a, b) => Date.parse(a.time) - Date.parse(b.time));
 }

@@ -55,6 +55,13 @@ export const SETTINGS: SettingDef[] = [
     label: "תיאור הנתונים למודל",
     help: "מה כל שדה אומר, איך מזהים שגיאה, יחידות מידה. נשלח למודל בכל שיחה.",
   },
+  {
+    key: "DEPLOY_QUERY",
+    group: "elastic",
+    kind: "text",
+    label: "שאילתת פריסות (ES|QL)",
+    help: "שאילתה שמחזירה אירועי פריסה או שינוי: עמודת זמן, ועמודות שיוצגו כתיאור. למשל: FROM deploys-* | KEEP @timestamp, service.name, version. מוצגות כקווים על גרפי הזמן.",
+  },
   { key: "DASHBOARDS_INDEX", group: "elastic", kind: "string", default: "ai-dashboards", label: "אינדקס הספרייה המשותפת" },
   { key: "MAX_ROWS", group: "elastic", kind: "number", default: "1000", min: 1, label: "מקסימום שורות לשאילתה" },
   {
@@ -143,9 +150,10 @@ export const ENV_FIELDS = [
   "LOG_INDEX_PATTERNS",
   "TIME_FIELD",
   "LOG_CONTEXT",
+  "DEPLOY_QUERY",
 ] as const;
 /** Left empty in an additional environment → taken from the main environment. */
-export const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT"]);
+export const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT", "DEPLOY_QUERY"]);
 
 export type EnvDef = { id: string; name: string } & Partial<Record<(typeof ENV_FIELDS)[number], string>>;
 

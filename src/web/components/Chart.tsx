@@ -1,11 +1,35 @@
 import { useEffect, useRef } from "react";
 import * as echarts from "echarts/core";
 import { BarChart, LineChart } from "echarts/charts";
-import { GridComponent, LegendComponent, TooltipComponent } from "echarts/components";
+import { GridComponent, LegendComponent, MarkLineComponent, TooltipComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import type { Panel, QueryResult } from "../../shared/recipe";
+import type { Annotation, Panel, QueryResult } from "../../shared/recipe";
 
-echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, CanvasRenderer]);
+echarts.use([LineChart, BarChart, GridComponent, TooltipComponent, LegendComponent, MarkLineComponent, CanvasRenderer]);
+
+/** An earlier period drawn as dashed lines, shifted forward onto the current axis. */
+export type PrevOverlay = { data: QueryResult; shiftMs: number; label: string };
+
+/** What the user clicked on, in data terms. */
+export type PointInfo = {
+  /** Click position inside the chart, in px. */
+  px: number;
+  py: number;
+  isTime: boolean;
+  /** Time charts: the clicked bucket. */
+  from?: string;
+  to?: string;
+  /** Category charts: the clicked category. */
+  category?: string;
+  xColumn: string;
+  seriesColumn?: string;
+  seriesName?: string;
+  yColumn: string;
+  value: number | null;
+};
+
+const DEPLOY_COLOR = "#6b6f76";
+const MAX_PREV_SERIES = 3;
 
 /** Categorical slots in fixed order (validated palette; never cycled). */
 export const SERIES_COLORS = ["#2a78d6", "#eb6834", "#1baf7a", "#eda100", "#e87ba4", "#008300", "#6250d6", "#e34948"];
@@ -79,13 +103,17 @@ function buildSeries(panel: Panel, data: QueryResult) {
   return { xs, isTime, series };
 }
 
+type Built = ReturnType<typeof buildSeries>;
+
 function optionFor(
   panel: Panel,
-  data: QueryResult,
+  built: Built,
   colorOf: (name: string) => string,
+  prev?: PrevOverlay,
+  annotations?: Annotation[],
 ): echarts.EChartsCoreOption {
   const unit = panel.unit;
-  const { xs, isTime, series } = buildSeries(panel, data);
+  const { xs, isTime, series } = built;
   const multi = series.length > 1;
   const fmtVal = (v: number) => `${numberFmt.format(v)}${unit ? ` ${unit}` : ""}`;
   const horizontal = panel.type === "hbar";
@@ -142,6 +170,79 @@ function optionFor(
     };
   });
 
+  // ---- Previous period: dashed, same colour, shifted forward onto today's axis ----
+  const isLine = panel.type === "line" || panel.type === "area";
+  if (prev && isTime && isLine) {
+    const old = buildSeries(panel, prev.data);
+    const keep = new Set(series.slice(0, MAX_PREV_SERIES).map((s) => s.name));
+    // Only draw the part that overlaps today's axis, so a misaligned result can't stretch it.
+    const lo = Date.parse(xs[0]);
+    const hi = Date.parse(xs[xs.length - 1]);
+    const pad = Math.max((hi - lo) / Math.max(xs.length - 1, 1), 60e3);
+    const inView = (k: string) => {
+      const t = Date.parse(k) + prev.shiftMs;
+      return t >= lo - pad && t <= hi + pad;
+    };
+    for (const s of old.series) {
+      if (!keep.has(s.name) || s.name === "אחר") continue;
+      const c = colorOf(s.name);
+      seriesOpts.push({
+        type: "line",
+        name: `${s.name} · ${prev.label}`,
+        data: old.xs.filter(inView).map((k) => [Date.parse(k) + prev.shiftMs, s.points.get(k) ?? null]) as any,
+        showSymbol: false,
+        symbolSize: 6,
+        connectNulls: false,
+        lineStyle: { width: 1.5, color: c, type: "dashed", opacity: 0.6 },
+        itemStyle: { color: c, opacity: 0.6 },
+        areaStyle: undefined,
+        emphasis: { focus: "series" },
+        z: 1,
+      } as any);
+    }
+  }
+
+  // ---- Deploy / change events: thin vertical lines; the description shows on hover ----
+  if (annotations?.length && isTime && xs.length) {
+    const lo = Date.parse(xs[0]);
+    const hi = Date.parse(xs[xs.length - 1]);
+    const span = Math.max(hi - lo, 1);
+    const shown = annotations.filter((a) => {
+      const t = Date.parse(a.time);
+      return t >= lo - span * 0.02 && t <= hi + span * 0.02;
+    });
+    if (shown.length) {
+      seriesOpts.push({
+        type: "line",
+        name: "__deploys",
+        data: [],
+        silent: false,
+        markLine: {
+          symbol: ["none", "circle"],
+          symbolSize: 6,
+          animation: false,
+          lineStyle: { color: DEPLOY_COLOR, width: 1, type: "solid", opacity: 0.55 },
+          label: { show: false },
+          emphasis: {
+            lineStyle: { width: 2, opacity: 1 },
+            label: {
+              show: true,
+              position: "insideEndTop",
+              color: "#15171a",
+              backgroundColor: "rgba(255,255,255,0.92)",
+              padding: [2, 4],
+              formatter: (p: any) => p.data?.label?.text ?? "",
+            },
+          },
+          data: shown.map((a) => ({
+            xAxis: Date.parse(a.time),
+            label: { text: `${timeLabel(a.time)} · ${a.label || "פריסה"}` },
+          })),
+        },
+      } as any);
+    }
+  }
+
   return {
     animation: false,
     textStyle: { fontFamily: "'IBM Plex Sans Hebrew', system-ui, sans-serif" },
@@ -154,7 +255,16 @@ function optionFor(
       outerBoundsContain: "axisLabel",
     },
     legend: multi
-      ? { type: "scroll", top: 0, left: "center", icon: "roundRect", itemWidth: 12, itemHeight: 4, textStyle: { color: INK_2 } }
+      ? {
+          type: "scroll",
+          top: 0,
+          left: "center",
+          icon: "roundRect",
+          itemWidth: 12,
+          itemHeight: 4,
+          textStyle: { color: INK_2 },
+          data: series.map((s) => s.name),
+        }
       : undefined,
     tooltip: {
       trigger: "axis",
@@ -165,6 +275,7 @@ function optionFor(
             formatter: (params: any[]) => {
               const head = timeLabel(params[0]?.value?.[0] ?? params[0]?.axisValue);
               const rows = params
+                .filter((p) => p.seriesName !== "__deploys")
                 .map((p) => `${p.marker} ${p.seriesName}: <b>${p.value?.[1] == null ? "—" : fmtVal(p.value[1])}</b>`)
                 .join("<br/>");
               return `<div dir="ltr" style="text-align:left">${head}<br/>${rows}</div>`;
@@ -178,9 +289,80 @@ function optionFor(
   };
 }
 
-export function Chart({ panel, data, height, colorScope }: { panel: Panel; data: QueryResult; height: number; colorScope?: string }) {
+function nearestIndex(sortedMs: number[], t: number): number {
+  let best = 0;
+  for (let i = 1; i < sortedMs.length; i++) if (Math.abs(sortedMs[i] - t) < Math.abs(sortedMs[best] - t)) best = i;
+  return best;
+}
+
+/** Turns a click position into data: which bucket / category, which series, what value. */
+function pointAt(panel: Panel, built: Built, chart: echarts.ECharts, px: number, py: number): PointInfo | null {
+  if (!chart.containPixel("grid", [px, py])) return null;
+  const [a, b] = chart.convertFromPixel({ gridIndex: 0 }, [px, py]) as number[];
+  const horizontal = panel.type === "hbar";
+  const { xs, isTime, series } = built;
+  if (!xs.length || !series.length) return null;
+
+  let key: string;
+  let clickedY: number;
+  const info: Partial<PointInfo> = {};
+  if (isTime) {
+    const ms = xs.map((k) => Date.parse(k));
+    const i = nearestIndex(ms, a);
+    key = xs[i];
+    const step = ms.length > 1 ? (i < ms.length - 1 ? ms[i + 1] - ms[i] : ms[i] - ms[i - 1]) : 3600e3;
+    info.from = new Date(ms[i]).toISOString();
+    info.to = new Date(ms[i] + step).toISOString();
+    clickedY = b;
+  } else {
+    const i = Math.max(0, Math.min(xs.length - 1, Math.round(horizontal ? b : a)));
+    key = xs[i];
+    info.category = key;
+    clickedY = horizontal ? a : b;
+  }
+  // The series whose value at this point is closest to where the user clicked.
+  let pick = series[0];
+  let bestDist = Infinity;
+  for (const s of series) {
+    const v = s.points.get(key);
+    if (v === null || v === undefined) continue;
+    const d = Math.abs(v - clickedY);
+    if (d < bestDist) {
+      bestDist = d;
+      pick = s;
+    }
+  }
+  const multi = series.length > 1;
+  return {
+    px,
+    py,
+    isTime,
+    xColumn: panel.x!,
+    yColumn: panel.series ? panel.y![0] : multi ? pick.name : panel.y![0],
+    seriesColumn: panel.series && multi ? panel.series : undefined,
+    seriesName: panel.series && multi ? pick.name : undefined,
+    value: pick.points.get(key) ?? null,
+    ...info,
+  };
+}
+
+export function Chart(props: {
+  panel: Panel;
+  data: QueryResult;
+  height: number;
+  colorScope?: string;
+  prev?: PrevOverlay;
+  annotations?: Annotation[];
+  onPoint?: (p: PointInfo) => void;
+}) {
+  const { panel, data, height, colorScope, prev, annotations, onPoint } = props;
   const ref = useRef<HTMLDivElement>(null);
   const chart = useRef<echarts.ECharts | null>(null);
+  const built = useRef<Built | null>(null);
+  const onPointRef = useRef(onPoint);
+  onPointRef.current = onPoint;
+  const panelRef = useRef(panel);
+  panelRef.current = panel;
   // Color follows the entity, not its rank: a series keeps its slot across refreshes.
   const slots = useRef(new Map<string, string>());
   const colorOf = (name: string) => {
@@ -196,12 +378,22 @@ export function Chart({ panel, data, height, colorScope }: { panel: Panel; data:
 
   useEffect(() => {
     if (!ref.current) return;
-    chart.current = echarts.init(ref.current, undefined, { renderer: "canvas" });
-    const ro = new ResizeObserver(() => chart.current?.resize());
+    const c = echarts.init(ref.current, undefined, { renderer: "canvas" });
+    chart.current = c;
+    c.getZr().on("click", (e: any) => {
+      if (!onPointRef.current || !built.current) return;
+      const p = pointAt(panelRef.current, built.current, c, e.offsetX, e.offsetY);
+      if (p) onPointRef.current(p);
+    });
+    c.getZr().on("mousemove", (e: any) => {
+      if (!onPointRef.current) return;
+      c.getZr().setCursorStyle(c.containPixel("grid", [e.offsetX, e.offsetY]) ? "pointer" : "default");
+    });
+    const ro = new ResizeObserver(() => c.resize());
     ro.observe(ref.current);
     return () => {
       ro.disconnect();
-      chart.current?.dispose();
+      c.dispose();
       chart.current = null;
     };
   }, []);
@@ -211,8 +403,10 @@ export function Chart({ panel, data, height, colorScope }: { panel: Panel; data:
   }, [panel.esql, panel.series, panel.y?.join(","), colorScope]);
 
   useEffect(() => {
-    chart.current?.setOption(optionFor(panel, data, colorOf), { notMerge: true });
-  }, [panel, data]);
+    const b = buildSeries(panel, data);
+    built.current = b;
+    chart.current?.setOption(optionFor(panel, b, colorOf, prev, annotations), { notMerge: true });
+  }, [panel, data, prev, annotations]);
 
   return <div ref={ref} dir="ltr" style={{ width: "100%", height }} role="img" aria-label={panel.title} />;
 }

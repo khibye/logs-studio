@@ -68,6 +68,8 @@ function buildEnv(id: string, name: string, v: (key: string) => string | undefin
       timeField: v("TIME_FIELD") || "@timestamp",
       /** What the data means, in your words — given to the model in every conversation. */
       logContext: cleanContext(v("LOG_CONTEXT")),
+      /** ES|QL returning deploy / change events (time + description columns). Empty = none. */
+      deployQuery: (v("DEPLOY_QUERY") ?? "").trim(),
       // The next three are global (same in every environment).
       dashboardsIndex: rawValue("DASHBOARDS_INDEX") || "ai-dashboards",
       /** Hard cap on rows any query may return. */

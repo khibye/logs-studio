@@ -60,9 +60,28 @@ function splitTop(s: string): string[] {
   return out;
 }
 
-function esql(query: string) {
+function esql(query: string, endMs = Date.now()) {
   if (/nonexistent_field/.test(query)) {
     return { status: 400, body: { error: { type: "verification_exception", reason: "Found 1 problem\nline 1:20: Unknown column [nonexistent_field]" } } };
+  }
+  if (/^FROM\s+deploys/i.test(query.trim())) {
+    // Fake deploy events: one right before the error spike (~9.5 h ago), two quiet ones.
+    const at = (h: number) => new Date(Date.now() - h * 3600e3).toISOString();
+    return {
+      status: 200,
+      body: {
+        columns: [
+          { name: "@timestamp", type: "date" },
+          { name: "service.name", type: "keyword" },
+          { name: "version", type: "keyword" },
+        ],
+        values: [
+          [at(20.5), TAG + "cart-svc", "v2.14.0"],
+          [at(9.6), TAG + "checkout-api", "v3.8.0"],
+          [at(4.2), TAG + "checkout-api", "v3.8.1"],
+        ],
+      },
+    };
   }
   const cmds = query.split("|").map((c) => c.trim());
   const limit0 = cmds.some((c) => /^LIMIT\s+0$/i.test(c));
@@ -90,7 +109,7 @@ function esql(query: string) {
     const timeBy = by.find((b) => /BUCKET|DATE_TRUNC/i.test(b.expr));
     const catBy = by.filter((b) => b !== timeBy);
     const times: (string | null)[] = timeBy
-      ? Array.from({ length: 24 }, (_, i) => new Date(Date.now() - (23 - i) * 3600e3).toISOString().replace(/:\d\d\.\d+Z$/, ":00.000Z"))
+      ? Array.from({ length: 24 }, (_, i) => new Date(endMs - (23 - i) * 3600e3).toISOString().replace(/:\d\d\.\d+Z$/, ":00.000Z"))
       : [null];
     const cats: (string | null)[] = catBy.length ? valuesFor(catBy[0].expr, timeBy ? 3 : 6) : [null];
     const values: unknown[][] = [];
@@ -154,7 +173,10 @@ app.post("/_security/user/_has_privileges", (req, res) => {
 });
 
 app.post("/_query", (req, res) => {
-  const out = esql(String(req.body.query ?? ""));
+  // Respect the time window the app sends (filter.range.<field>.lte), like Elasticsearch would.
+  const range = req.body.filter?.range ? (Object.values(req.body.filter.range)[0] as any) : undefined;
+  const end = range?.lte ? Date.parse(range.lte) : Date.now();
+  const out = esql(String(req.body.query ?? ""), Number.isFinite(end) ? end : Date.now());
   res.status(out.status).json(out.body);
 });
 

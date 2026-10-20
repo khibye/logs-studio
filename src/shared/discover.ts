@@ -9,9 +9,16 @@ function risonString(s: string): string {
  * Link that opens a panel's ES|QL query in Kibana Discover (ES|QL mode).
  * `baseUrl` already includes the space prefix when one is configured.
  */
-export function discoverUrl(baseUrl: string, esql: string, range: TimeRangeKey): string {
+export function discoverUrl(
+  baseUrl: string,
+  esql: string,
+  range: TimeRangeKey,
+  window?: { from: string; to: string },
+): string {
   const from = TIME_RANGES[range]?.from ?? "now-24h";
-  const g = `(time:(from:${from},to:now))`;
+  const g = window
+    ? `(time:(from:${risonString(window.from)},to:${risonString(window.to)}))`
+    : `(time:(from:${from},to:now))`;
   const a = `(dataSource:(type:esql),query:(esql:${risonString(esql.trim())}))`;
   return `${baseUrl.replace(/\/$/, "")}/app/discover#/?_g=${encodeURIComponent(g)}&_a=${encodeURIComponent(a)}`;
 }

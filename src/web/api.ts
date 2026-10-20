@@ -3,6 +3,8 @@ import type {
   ChatEvent,
   ChatMessage,
   DashboardSummary,
+  Annotation,
+  Compare,
   ModelsInfo,
   QueryResult,
   Recipe,
@@ -43,8 +45,23 @@ export const api = {
 
   capabilities: (refresh = false) => call<Capabilities>(`/api/capabilities${refresh ? "?refresh=1" : ""}`),
 
-  query: (esql: string, time_range: TimeRangeKey, signal?: AbortSignal) =>
-    call<QueryResult>("/api/query", { method: "POST", body: JSON.stringify({ esql, time_range }), signal }),
+  /** `env` overrides the current environment (side-by-side comparison); `compare` runs it on an earlier period. */
+  query: (esql: string, time_range: TimeRangeKey, opts: { signal?: AbortSignal; compare?: Compare; env?: string } = {}) =>
+    call<QueryResult>("/api/query", {
+      method: "POST",
+      body: JSON.stringify({ esql, time_range, compare: opts.compare }),
+      signal: opts.signal,
+      headers: opts.env ? { "x-env": opts.env } : undefined,
+    }),
+
+  annotations: (time_range: TimeRangeKey, env?: string) =>
+    call<{ enabled: boolean; events: Annotation[]; error?: string }>(`/api/annotations?time_range=${time_range}`, {
+      headers: env ? { "x-env": env } : undefined,
+    }),
+
+  /** Capabilities of a specific environment (admin page status per environment). */
+  capabilitiesFor: (env: string, refresh = false) =>
+    call<Capabilities>(`/api/capabilities${refresh ? "?refresh=1" : ""}`, { headers: { "x-env": env } }),
 
   listDashboards: (q?: string) =>
     call<DashboardSummary[]>(`/api/dashboards${q ? `?q=${encodeURIComponent(q)}` : ""}`),
@@ -102,7 +119,7 @@ export const adminApi = {
       body: JSON.stringify({ values }),
     }),
   test: (password: string) =>
-    call<{ capabilities: Capabilities; models: ModelsInfo }>("/api/admin/test", {
+    call<{ capabilities: Capabilities; models: ModelsInfo; available: { models: string[]; error?: string } }>("/api/admin/test", {
       method: "POST",
       headers: adminHeaders(password),
     }),

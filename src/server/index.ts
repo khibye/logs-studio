@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { config, hasEnv, MAIN_ENV, withEnv } from "./config";
-import { HttpError, runEsql } from "./elastic";
+import { HttpError, deployEvents, runEsql } from "./elastic";
 import { getCapabilities } from "./capabilities";
 import { getDashboard, listDashboards, listVersions, saveDashboard } from "./library";
 import { exportToKibana } from "./kibanaExport";
@@ -74,10 +74,34 @@ app.use("/api/admin", adminRouter);
 app.post(
   "/api/query",
   route(async (req, res) => {
-    const body = z.object({ esql: z.string().min(1).max(4000), time_range: RangeSchema }).parse(req.body);
+    const body = z
+      .object({
+        esql: z.string().min(1).max(4000),
+        time_range: RangeSchema,
+        /** Run the same query on an earlier period, for comparisons. */
+        compare: z.enum(["previous", "week"]).optional(),
+      })
+      .parse(req.body);
     const ctrl = new AbortController();
     res.on("close", () => !res.writableEnded && ctrl.abort());
-    res.json(await runEsql(body.esql, body.time_range, { signal: ctrl.signal }));
+    res.json(await runEsql(body.esql, body.time_range, { signal: ctrl.signal, compare: body.compare }));
+  }),
+);
+
+/** Deploy / change events for chart annotations (empty when DEPLOY_QUERY isn't set). */
+app.get(
+  "/api/annotations",
+  route(async (req, res) => {
+    const range = RangeSchema.parse(req.query.time_range ?? "24h");
+    if (!config.elastic.deployQuery) {
+      res.json({ enabled: false, events: [] });
+      return;
+    }
+    try {
+      res.json({ enabled: true, events: await deployEvents(range) });
+    } catch (err: any) {
+      res.json({ enabled: true, events: [], error: err.message });
+    }
   }),
 );
 

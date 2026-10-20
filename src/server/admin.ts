@@ -4,7 +4,7 @@ import { z } from "zod";
 import { config, rebuildConfig } from "./config";
 import { settingsView, storageInfo, updateSettings } from "./settings";
 import { getCapabilities } from "./capabilities";
-import { listModels } from "./llm";
+import { listAvailableModels, listModels } from "./llm";
 
 /**
  * Admin API. Enabled only when ADMIN_PASSWORD is set in the environment.
@@ -69,7 +69,11 @@ adminRouter.put(
 adminRouter.post(
   "/test",
   wrap(async (_req, res) => {
-    const [capabilities, models] = await Promise.all([getCapabilities(true), listModels(true)]);
-    res.json({ capabilities, models });
+    const [capabilities, models, available] = await Promise.all([
+      getCapabilities(true),
+      listModels(true),
+      listAvailableModels(),
+    ]);
+    res.json({ capabilities, models, available });
   }),
 );

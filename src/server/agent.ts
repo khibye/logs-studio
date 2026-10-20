@@ -5,7 +5,7 @@ import type {
   ChatCompletionTool,
 } from "openai/resources/chat/completions";
 import { config } from "./config";
-import { HttpError, runEsql } from "./elastic";
+import { HttpError, deployEvents, runEsql } from "./elastic";
 import { systemPrompt } from "./prompt";
 import { llmClient } from "./llm";
 import {
@@ -26,7 +26,7 @@ const NUMERIC = new Set([
   "counter_long", "counter_double", "counter_integer",
 ]);
 
-const tools: ChatCompletionTool[] = [
+const ALL_TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
@@ -55,10 +55,15 @@ const tools: ChatCompletionTool[] = [
     type: "function",
     function: {
       name: "run_esql",
-      description: "Run an ES|QL query (time range filter applied automatically). Returns columns and up to 30 rows.",
+      description:
+        "Run an ES|QL query. By default the dashboard's time range is applied automatically. Pass from/to (ISO 8601) to run it on an exact window instead, e.g. around a spike or the window just before it. Returns columns and up to 30 rows.",
       parameters: {
         type: "object",
-        properties: { query: { type: "string" } },
+        properties: {
+          query: { type: "string" },
+          from: { type: "string", description: "Optional window start, ISO 8601 (replaces the dashboard range)" },
+          to: { type: "string", description: "Optional window end, ISO 8601" },
+        },
         required: ["query"],
         additionalProperties: false,
       },
@@ -176,6 +181,37 @@ async function validateDashboard(args: any, draft: Recipe | null, range: TimeRan
 
 type ToolCall = { id: string; name: string; arguments: string };
 
+/** Optional explicit window from tool arguments (ISO strings). */
+function windowArg(args: any): { from: number; to: number } | undefined {
+  if (!args?.from && !args?.to) return undefined;
+  const from = Date.parse(String(args.from ?? ""));
+  const to = args.to ? Date.parse(String(args.to)) : Date.now();
+  if (!Number.isFinite(from) || !Number.isFinite(to)) throw new HttpError(400, "from/to must be ISO 8601 dates");
+  return { from, to };
+}
+
+const LIST_DEPLOYS_TOOL: ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "list_deploys",
+    description:
+      "List deploy / change events (time + description) in the dashboard range, or in an explicit from/to window. Use it when explaining a change: did a deploy happen just before?",
+    parameters: {
+      type: "object",
+      properties: {
+        from: { type: "string", description: "Optional window start, ISO 8601" },
+        to: { type: "string", description: "Optional window end, ISO 8601" },
+      },
+      additionalProperties: false,
+    },
+  },
+};
+
+/** Tools offered in this environment (list_deploys only when a deploy query is configured). */
+function toolsFor(): ChatCompletionTool[] {
+  return config.elastic.deployQuery ? [...ALL_TOOLS, LIST_DEPLOYS_TOOL] : ALL_TOOLS;
+}
+
 function toolSummary(name: string, args: any): string {
   switch (name) {
     case "list_indices":
@@ -183,7 +219,9 @@ function toolSummary(name: string, args: any): string {
     case "get_fields":
       return `get_fields · ${args?.index_pattern ?? ""}${args?.contains ? ` (${args.contains})` : ""}`;
     case "run_esql":
-      return `run_esql · ${String(args?.query ?? "").replace(/\s+/g, " ").slice(0, 70)}`;
+      return `run_esql${args?.from ? " (window)" : ""} · ${String(args?.query ?? "").replace(/\s+/g, " ").slice(0, 70)}`;
+    case "list_deploys":
+      return `list_deploys${args?.from ? " (window)" : ""}`;
     case "set_dashboard":
       return `set_dashboard · ${Array.isArray(args?.panels) ? args.panels.length : 0} panels`;
     default:
@@ -239,9 +277,19 @@ export async function runAgent(input: {
           break;
         }
         case "run_esql": {
-          const res = await runEsql(String(args.query ?? ""), range, { signal, maxRows: 200 });
+          const res = await runEsql(String(args.query ?? ""), range, {
+            signal,
+            maxRows: 200,
+            window: windowArg(args),
+          });
           result = preview(res);
           end = `${res.values.length} rows`;
+          break;
+        }
+        case "list_deploys": {
+          const events = await deployEvents(range, { signal, window: windowArg(args) });
+          result = { count: events.length, events: events.slice(-60) };
+          end = `${events.length} events`;
           break;
         }
         case "set_dashboard": {
@@ -301,7 +349,7 @@ async function complete(
   signal: AbortSignal,
   emit: (e: ChatEvent) => void,
 ): Promise<{ text: string; toolCalls: ToolCall[] }> {
-  const base = { model, messages, tools, temperature: config.llm.temperature };
+  const base = { model, messages, tools: toolsFor(), temperature: config.llm.temperature };
 
   if (!config.llm.stream) {
     const res = await client.chat.completions.create({ ...base, stream: false }, { signal });
