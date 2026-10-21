@@ -1,4 +1,5 @@
 import { config } from "./config";
+import { log } from "./log";
 import { TIME_RANGES, compareShiftMs, type Annotation, type Compare, type QueryResult, type TimeRangeKey } from "../shared/recipe";
 
 export class HttpError extends Error {
@@ -63,6 +64,8 @@ export async function es<T = any>(
   }
 
   let res: Response;
+  const t0 = Date.now();
+  const what = `${method} ${path.split("?")[0]}`;
   try {
     res = await fetch(url, {
       method: viaKibana ? "POST" : method,
@@ -71,8 +74,16 @@ export async function es<T = any>(
       signal,
     });
   } catch (err: any) {
-    if (err?.name === "TimeoutError") throw new HttpError(504, `${viaKibana ? "Kibana" : "Elasticsearch"} did not answer in time`);
-    if (err?.name === "AbortError") throw new HttpError(499, "Request cancelled");
+    const ms = Date.now() - t0;
+    if (err?.name === "TimeoutError") {
+      log.warn("es.timeout", { call: what, via: viaKibana ? "kibana" : "direct", ms, timeoutMs: config.elastic.queryTimeoutMs });
+      throw new HttpError(504, `${viaKibana ? "Kibana" : "Elasticsearch"} did not answer in time`);
+    }
+    if (err?.name === "AbortError") {
+      log.debug("es.cancelled", { call: what, ms });
+      throw new HttpError(499, "Request cancelled");
+    }
+    log.warn("es.unreachable", { call: what, target, error: err?.cause?.code ?? err?.message, ms });
     throw new HttpError(502, `Cannot reach ${target}: ${err?.cause?.code ?? err?.message}`);
   }
   const text = await res.text();
@@ -84,6 +95,12 @@ export async function es<T = any>(
   }
   // Some Kibana versions report the upstream status in a header.
   const status = Number(res.headers.get("x-console-proxy-status-code")) || res.status;
+  const ms = Date.now() - t0;
+  if (status >= 400 && !(status === 404 && opts.allow404)) {
+    log.warn("es.error", { call: what, via: viaKibana ? "kibana" : "direct", status, ms, error: esReason(body, status) });
+  } else {
+    log.debug("es.call", { call: what, via: viaKibana ? "kibana" : "direct", status, ms, bytes: text.length });
+  }
   if (status >= 400) {
     if (status === 404 && opts.allow404 && !(viaKibana && isKibanaError(body))) return body as T;
     let msg = esReason(body, status);
@@ -198,10 +215,24 @@ export async function runEsql(
   };
   if (/\?_tstart|\?_tend/.test(guarded)) body.params = [{ _tstart: startIso }, { _tend: endIso }];
   const t0 = Date.now();
-  const res = await es<{ columns: { name: string; type: string }[]; values: unknown[][]; took?: number }>(
-    "/_query?format=json",
-    { body, signal: opts.signal },
-  );
+  let res: { columns: { name: string; type: string }[]; values: unknown[][]; took?: number };
+  try {
+    res = await es("/_query?format=json", { body, signal: opts.signal });
+  } catch (err: any) {
+    log.info("esql.failed", { ms: Date.now() - t0, error: err.message, query: guarded });
+    throw err;
+  }
+  log.debug("esql", {
+    rows: res.values?.length ?? 0,
+    cols: res.columns?.length ?? 0,
+    ms: Date.now() - t0,
+    took: res.took,
+    from: startIso,
+    to: endIso,
+    compare: opts.compare,
+    trusted: opts.trusted || undefined,
+    query: guarded,
+  });
   return {
     columns: res.columns ?? [],
     values: res.values ?? [],

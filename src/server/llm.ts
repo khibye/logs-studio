@@ -2,6 +2,7 @@ import OpenAI from "openai";
 import { config, onConfigChange } from "./config";
 import { HttpError } from "./elastic";
 import type { ModelsInfo } from "../shared/recipe";
+import { log } from "./log";
 
 /** A client for the current settings (cheap to create; settings can change at runtime). */
 export function llmClient(): OpenAI {
@@ -45,6 +46,8 @@ export async function listModels(force = false): Promise<ModelsInfo> {
     }
   }
 
+  if (error) log.warn("llm.models_list_failed", { error });
+  else log.debug("llm.models", { count: models.length, source: config.llm.models.length ? "LLM_MODELS" : "key" });
   if (def) models = [def, ...models.filter((m) => m !== def)];
   const value: ModelsInfo = { models, default: def || models[0] || "", error };
   // Don't keep a failure for long — the endpoint may come back.
@@ -77,6 +80,9 @@ export async function resolveModel(requested: string | undefined): Promise<strin
     throw new HttpError(500, "No model configured: set LLM_MODEL");
   }
   const { models } = await listModels();
-  if (!models.includes(requested)) throw new HttpError(400, `Model "${requested}" is not available`);
+  if (!models.includes(requested)) {
+    log.warn("llm.model_rejected", { requested });
+    throw new HttpError(400, `Model "${requested}" is not available`);
+  }
   return requested;
 }

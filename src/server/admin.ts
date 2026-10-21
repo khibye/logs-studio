@@ -5,6 +5,7 @@ import { config, rebuildConfig } from "./config";
 import { settingsView, storageInfo, updateSettings } from "./settings";
 import { getCapabilities } from "./capabilities";
 import { listAvailableModels, listModels } from "./llm";
+import { log } from "./log";
 
 /**
  * Admin API. Enabled only when ADMIN_PASSWORD is set in the environment.
@@ -28,6 +29,7 @@ async function requireAdmin(req: Request, res: Response, next: NextFunction) {
   }
   const given = String(req.headers["x-admin-password"] ?? "");
   if (!given || !same(given, config.adminPassword)) {
+    log.warn("admin.login_failed", { ip: req.ip, path: req.path });
     await sleep(600); // slow down guessing
     res.status(401).json({ error: "סיסמה שגויה" });
     return;
@@ -57,9 +59,17 @@ adminRouter.put(
     try {
       updateSettings(body.values);
     } catch (err: any) {
+      log.warn("admin.settings_rejected", { keys: Object.keys(body.values).join(","), fields: err.fields, error: err.message });
       res.status(err.status ?? 500).json({ error: err.message, fields: err.fields });
       return;
     }
+    // Keys only — values (which may be secrets) are never logged.
+    log.info("admin.settings_saved", {
+      changed: Object.entries(body.values)
+        .map(([k, v]) => (v === null ? `${k}(reset)` : k))
+        .join(","),
+      ip: req.ip,
+    });
     rebuildConfig();
     res.json({ settings: settingsView(), storage: storageInfo() });
   }),

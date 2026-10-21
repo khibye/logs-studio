@@ -36,7 +36,11 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     body = text;
   }
-  if (!res.ok) throw new ApiError(res.status, body?.error ?? `שגיאה ${res.status}`, body?.fields);
+  if (!res.ok) {
+    // The request id matches the server log line for this call (LOG_LEVEL=info or debug).
+    const req = res.headers.get("x-request-id");
+    throw new ApiError(res.status, `${body?.error ?? `שגיאה ${res.status}`}${req ? ` · req ${req}` : ""}`, body?.fields);
+  }
   return body as T;
 }
 

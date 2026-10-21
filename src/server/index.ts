@@ -11,6 +11,7 @@ import { exportToKibana } from "./kibanaExport";
 import { runAgent } from "./agent";
 import { listModels, resolveModel } from "./llm";
 import { adminRouter } from "./admin";
+import { log, logLevel, requestId, safeHost, setLogEnv, withRequest } from "./log";
 import { RecipeSchema, TIME_RANGE_KEYS, type ChatEvent, type TimeRangeKey } from "../shared/recipe";
 
 /**
@@ -20,6 +21,35 @@ import { RecipeSchema, TIME_RANGE_KEYS, type ChatEvent, type TimeRangeKey } from
  */
 const app = express();
 app.disable("x-powered-by");
+
+// Request id + one log line per request (info for the API, debug for static files).
+app.use((req, res, next) => {
+  withRequest(() => {
+    const t0 = process.hrtime.bigint();
+    const isApi = req.path.startsWith("/api/");
+    res.setHeader("x-request-id", requestId() ?? "");
+    res.on("finish", () => {
+      const fullPath = req.originalUrl.split("?")[0];
+      if (fullPath === "/api/health") return;
+      const ms = Number(process.hrtime.bigint() - t0) / 1e6;
+      const fields = {
+        status: res.statusCode,
+        ms: Math.round(ms),
+        ...(isApi && req.query && Object.keys(req.query).length ? { query: req.query } : {}),
+      };
+      const line = `http ${req.method} ${fullPath}`;
+      if (res.statusCode >= 500) log.error(line, fields);
+      else if (res.statusCode >= 400) log.warn(line, fields);
+      else if (isApi) log.info(line, fields);
+      else log.debug(line, fields);
+    });
+    res.on("close", () => {
+      if (!res.writableEnded) log.info(`http ${req.method} ${req.originalUrl.split("?")[0]} cancelled by client`);
+    });
+    next();
+  });
+});
+
 app.use(express.json({ limit: "2mb" }));
 
 // Optional basic auth — read on every request, so changing it in the admin panel applies at once.
@@ -27,6 +57,7 @@ app.use((req, res, next) => {
   if (!config.basicAuth || req.path === "/api/health") return next();
   const expected = "Basic " + Buffer.from(config.basicAuth).toString("base64");
   if (req.headers.authorization === expected) return next();
+  if (req.headers.authorization) log.warn("auth.basic_rejected", { ip: req.ip });
   res.setHeader("WWW-Authenticate", 'Basic realm="Logs Studio"').status(401).send("Authentication required");
 });
 
@@ -48,6 +79,7 @@ app.use("/api", (req, res, next) => {
     res.status(400).json({ error: `Unknown environment "${id}"` });
     return;
   }
+  setLogEnv(id);
   withEnv(id, () => next());
 });
 
@@ -145,7 +177,7 @@ app.post(
     } catch (err: any) {
       if (!ctrl.signal.aborted) {
         const status = err?.status ? ` (HTTP ${err.status})` : "";
-        emit({ type: "error", message: `${err?.message ?? "Unexpected error"}${status}` });
+        emit({ type: "error", message: `${err?.message ?? "Unexpected error"}${status} · req ${requestId()}` });
       }
     }
     emit({ type: "done" });
@@ -214,18 +246,39 @@ app.use((err: any, _req: Request, res: Response, _next: NextFunction) => {
     return res.status(400).json({ error: err.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("; ") });
   }
   const status = err instanceof HttpError ? err.status : 500;
-  if (status >= 500) console.error(err);
+  if (status >= 500) log.error("request.failed", { status, error: err?.message, stack: err?.stack });
+  else log.debug("request.rejected", { status, error: err?.message });
   if (res.headersSent) return res.end();
   res.status(status).json({ error: err?.message ?? "Unexpected error" });
 });
 
+process.on("unhandledRejection", (reason: any) => {
+  log.error("process.unhandled_rejection", { error: reason?.message ?? String(reason), stack: reason?.stack });
+});
+process.on("uncaughtException", (err) => {
+  log.error("process.uncaught_exception", { error: err.message, stack: err.stack });
+});
+
 app.listen(config.port, () => {
-  console.log(`Logs Studio listening on http://localhost:${config.port}`);
-  console.log(
-    config.elastic.connection === "kibana"
-      ? `  Elasticsearch: through Kibana at ${config.kibana.url}  ·  patterns: ${config.elastic.logPatterns.join(", ")}`
-      : `  Elasticsearch: ${config.elastic.url}  ·  patterns: ${config.elastic.logPatterns.join(", ")}`,
-  );
-  console.log(`  LLM: ${config.llm.baseUrl || "(not set)"}  ·  model: ${config.llm.model || "(not set)"}`);
-  console.log(`  Admin panel: ${config.adminPassword ? "enabled" : "disabled (set ADMIN_PASSWORD)"}`);
+  log.info("server.started", { port: config.port, logLevel: logLevel(), admin: Boolean(config.adminPassword) });
+  for (const env of config.environments) {
+    log.info("server.environment", {
+      id: env.id,
+      name: env.name,
+      connection: env.elastic.connection,
+      elastic: env.elastic.connection === "direct" ? safeHost(env.elastic.url) : undefined,
+      kibana: safeHost(env.kibana.url),
+      space: env.kibana.space || undefined,
+      indices: env.elastic.logPatterns.join(","),
+      apiKey: env.elastic.apiKey ? "set" : "missing",
+      deployQuery: env.elastic.deployQuery ? "set" : undefined,
+    });
+  }
+  log.info("server.llm", {
+    url: safeHost(config.llm.baseUrl) ?? "(not set)",
+    model: config.llm.model || "(not set)",
+    models: config.llm.models.length ? config.llm.models.join(",") : "all",
+    stream: config.llm.stream,
+    maxSteps: config.llm.maxSteps,
+  });
 });

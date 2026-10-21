@@ -8,6 +8,7 @@ import { config } from "./config";
 import { HttpError, deployEvents, runEsql } from "./elastic";
 import { systemPrompt } from "./prompt";
 import { llmClient } from "./llm";
+import { log } from "./log";
 import {
   PANEL_TYPES,
   PanelSchema,
@@ -239,6 +240,17 @@ export async function runAgent(input: {
 }) {
   const { range, model, signal, emit } = input;
   const client = llmClient();
+  const started = Date.now();
+  let toolCount = 0;
+  let toolErrors = 0;
+  const last = input.messages[input.messages.length - 1];
+  log.info("chat.start", {
+    model,
+    range,
+    messages: input.messages.length,
+    dashboard: input.recipe ? `${input.recipe.title} (${input.recipe.panels.length} panels)` : undefined,
+    question: log.isDebug() ? last?.content?.slice(0, 300) : undefined,
+  });
 
   let draft = input.recipe;
   const convo: ChatCompletionMessageParam[] = [
@@ -254,6 +266,9 @@ export async function runAgent(input: {
       return { error: "Arguments were not valid JSON" };
     }
     emit({ type: "tool_start", id: call.id, name: call.name, summary: toolSummary(call.name, args) });
+    const t0 = Date.now();
+    toolCount++;
+    log.debug("chat.tool.start", { tool: call.name, args: call.arguments?.slice(0, 2000) });
     try {
       let result: unknown;
       let ok = true;
@@ -312,16 +327,40 @@ export async function runAgent(input: {
           end = "unknown tool";
       }
       emit({ type: "tool_end", id: call.id, ok, summary: end });
+      if (!ok) toolErrors++;
+      (ok ? log.info : log.warn)("chat.tool", {
+        tool: call.name,
+        ok,
+        ms: Date.now() - t0,
+        result: end,
+        errors: !ok && call.name === "set_dashboard" ? (result as any)?.errors : undefined,
+      });
       return result;
     } catch (err: any) {
       if (signal.aborted) throw err;
+      toolErrors++;
+      log.warn("chat.tool", { tool: call.name, ok: false, ms: Date.now() - t0, error: err.message });
       emit({ type: "tool_end", id: call.id, ok: false, summary: err.message.slice(0, 160) });
       return { error: err.message };
     }
   }
 
+  const finish = (outcome: string, steps: number) =>
+    log.info("chat.end", { outcome, steps, tools: toolCount, toolErrors, ms: Date.now() - started, model });
+  signal.addEventListener("abort", () => log.info("chat.cancelled", { ms: Date.now() - started, tools: toolCount }), {
+    once: true,
+  });
+
   for (let step = 0; step < config.llm.maxSteps; step++) {
-    const { text, toolCalls } = await complete(client, model, convo, signal, emit);
+    let text: string;
+    let toolCalls: ToolCall[];
+    try {
+      ({ text, toolCalls } = await complete(client, model, convo, signal, emit, step + 1));
+    } catch (err: any) {
+      if (!signal.aborted)
+        log.error("chat.llm_failed", { step: step + 1, model, status: err?.status, error: err?.message });
+      throw err;
+    }
     convo.push({
       role: "assistant",
       content: text || null,
@@ -333,12 +372,17 @@ export async function runAgent(input: {
           }
         : {}),
     } as ChatCompletionMessageParam);
-    if (!toolCalls.length) return;
+    if (!toolCalls.length) {
+      finish("answered", step + 1);
+      return;
+    }
     for (const call of toolCalls) {
       const result = await execTool(call);
       convo.push({ role: "tool", tool_call_id: call.id, content: cap(JSON.stringify(result)) });
     }
   }
+  log.warn("chat.max_steps_reached", { maxSteps: config.llm.maxSteps, tools: toolCount, toolErrors });
+  finish("max_steps", config.llm.maxSteps);
   emit({ type: "text", delta: "\n\n(הגעתי למגבלת הצעדים לשאלה אחת. אפשר להמשיך בהודעה נוספת.)" });
 }
 
@@ -348,8 +392,25 @@ async function complete(
   messages: ChatCompletionMessageParam[],
   signal: AbortSignal,
   emit: (e: ChatEvent) => void,
+  step = 1,
 ): Promise<{ text: string; toolCalls: ToolCall[] }> {
   const base = { model, messages, tools: toolsFor(), temperature: config.llm.temperature };
+  const t0 = Date.now();
+  const promptChars = messages.reduce((n, m) => n + (typeof m.content === "string" ? m.content.length : 0), 0);
+  log.debug("llm.request", { step, model, messages: messages.length, promptChars, stream: config.llm.stream });
+  const done = (text: string, toolCalls: ToolCall[], finish?: string | null, usage?: any, firstTokenMs?: number) =>
+    log.debug("llm.response", {
+      step,
+      model,
+      ms: Date.now() - t0,
+      firstTokenMs,
+      finish: finish ?? undefined,
+      textChars: text.length,
+      toolCalls: toolCalls.map((t) => t.name).join(",") || undefined,
+      promptTokens: usage?.prompt_tokens,
+      completionTokens: usage?.completion_tokens,
+      text: text ? text.slice(0, 300) : undefined,
+    });
 
   if (!config.llm.stream) {
     const res = await client.chat.completions.create({ ...base, stream: false }, { signal });
@@ -359,13 +420,20 @@ async function complete(
     const toolCalls = (msg?.tool_calls ?? [])
       .filter((t: any) => t.type === "function" || t.function)
       .map((t: any, i: number) => ({ id: t.id || `call_${Date.now()}_${i}`, name: t.function.name, arguments: t.function.arguments ?? "" }));
+    done(text, toolCalls, res.choices[0]?.finish_reason, res.usage);
     return { text, toolCalls };
   }
 
   const stream = await client.chat.completions.create({ ...base, stream: true }, { signal });
   let text = "";
+  let finish: string | null | undefined;
+  let usage: any;
+  let firstTokenMs: number | undefined;
   const calls = new Map<number, ToolCall>();
   for await (const chunk of stream) {
+    if (firstTokenMs === undefined) firstTokenMs = Date.now() - t0;
+    if ((chunk as any).usage) usage = (chunk as any).usage;
+    if (chunk.choices?.[0]?.finish_reason) finish = chunk.choices[0].finish_reason;
     const delta: any = chunk.choices?.[0]?.delta;
     if (!delta) continue;
     if (delta.content) {
@@ -385,5 +453,6 @@ async function complete(
     .sort((a, b) => a[0] - b[0])
     .map(([i, c]) => ({ ...c, id: c.id || `call_${Date.now()}_${i}` }))
     .filter((c) => c.name);
+  done(text, toolCalls, finish, usage, firstTokenMs);
   return { text, toolCalls };
 }

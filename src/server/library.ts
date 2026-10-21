@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { config, withEnv } from "./config";
 import { es as rawEs, HttpError } from "./elastic";
+import { log } from "./log";
 import { RecipeSchema, type DashboardSummary, type Recipe } from "../shared/recipe";
 
 /**
@@ -178,5 +179,6 @@ export async function saveDashboard(input: Recipe, mode: SaveMode): Promise<Reci
     if (notFoundIndex(err)) throw new HttpError(404, `האינדקס ${config.elastic.dashboardsIndex} עדיין לא קיים`);
     throw err;
   }
+  log.info("library.saved", { mode, id, version, title: recipe.title, panels: recipe.panels.length, forkedFrom: forked_from?.id });
   return { ...recipe, id, version, forked_from };
 }

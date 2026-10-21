@@ -1,6 +1,7 @@
 import "dotenv/config";
 import { chmodSync, existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { log } from "./log";
 
 /**
  * Runtime settings, editable from the admin panel.
@@ -124,6 +125,24 @@ export const SETTINGS: SettingDef[] = [
     help: "0 = לא נשמרות. השיחות נשמרות רק בדפדפן של כל משתמש.",
   },
   {
+    key: "LOG_LEVEL",
+    group: "app",
+    kind: "enum",
+    options: ["error", "warn", "info", "debug"],
+    default: "info",
+    label: "רמת לוגים",
+    help: "info: כל בקשה, כל שיחה וכל צעד של המודל. debug: גם כל שאילתה ל-Elasticsearch וכל קריאה למודל, עם זמנים. מפתחות וסיסמאות לא נכתבים ללוג.",
+  },
+  {
+    key: "LOG_FORMAT",
+    group: "app",
+    kind: "enum",
+    options: ["text", "json"],
+    default: "text",
+    label: "פורמט לוגים",
+    help: "json: אובייקט אחד בכל שורה, למערכות איסוף לוגים",
+  },
+  {
     key: "APP_BASIC_AUTH",
     group: "app",
     kind: "secret",
@@ -171,7 +190,7 @@ export function parseEnvironments(raw: string | undefined): EnvDef[] {
         return out;
       });
   } catch (err: any) {
-    console.warn(`ENVIRONMENTS is not valid JSON: ${err.message}`);
+    log.warn("settings.environments_invalid_json", { error: err.message });
     return [];
   }
 }
@@ -217,7 +236,7 @@ function readFile() {
   } catch (err: any) {
     // Keep the last good values; never crash the app over a bad file.
     fileError = `Could not read ${settingsFile}: ${err.message}`;
-    console.warn(fileError);
+    log.warn("settings.file_unreadable", { file: settingsFile, error: err.message });
   }
 }
 readFile();
@@ -244,7 +263,7 @@ function contextFromFile(): string | undefined {
   try {
     contextFileCache = { at: Date.now(), text: readFileSync(f, "utf8") };
   } catch (err: any) {
-    console.warn(`LOG_CONTEXT_FILE could not be read: ${err.message}`);
+    log.warn("settings.log_context_file_unreadable", { file: f, error: err.message });
     contextFileCache = { at: Date.now(), text: undefined };
   }
   return contextFileCache.text;

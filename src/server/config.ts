@@ -1,5 +1,6 @@
 import "dotenv/config";
 import { AsyncLocalStorage } from "node:async_hooks";
+import { log, setLogFormat, setLogLevel } from "./log";
 import {
   ENV_INHERITED,
   MAIN_ENV,
@@ -131,6 +132,8 @@ function buildGlobal() {
   };
 }
 
+setLogLevel(rawValue("LOG_LEVEL"));
+setLogFormat(rawValue("LOG_FORMAT"));
 let G = buildGlobal();
 let ENVS = buildEnvs();
 const envContext = new AsyncLocalStorage<string>();
@@ -192,14 +195,20 @@ export function onConfigChange(fn: () => void) {
 
 /** Recomputes the configuration after settings changed. */
 export function rebuildConfig() {
+  setLogLevel(rawValue("LOG_LEVEL"));
+  setLogFormat(rawValue("LOG_FORMAT"));
   G = buildGlobal();
   ENVS = buildEnvs();
+  log.info("config.applied", { environments: [...ENVS.keys()].join(","), logLevel: rawValue("LOG_LEVEL") ?? "info" });
   for (const fn of listeners) fn();
 }
 
 // Pick up changes written by another replica sharing the same volume.
 setInterval(() => {
-  if (reloadIfChanged()) rebuildConfig();
+  if (reloadIfChanged()) {
+    log.info("settings.reloaded_from_disk");
+    rebuildConfig();
+  }
 }, 10_000).unref();
 
 export function kibanaBase(url: string | undefined): string | undefined {

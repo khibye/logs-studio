@@ -39,7 +39,7 @@ const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT"
 
 const LLM_FIELDS = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_MODELS"];
 const LLM_ADVANCED = ["LLM_STREAM", "LLM_MAX_STEPS", "LLM_TEMPERATURE"];
-const GENERAL_FIELDS = ["CHAT_RETENTION_HOURS", "APP_BASIC_AUTH", "LIBRARY_ENV", "DASHBOARDS_INDEX"];
+const GENERAL_FIELDS = ["CHAT_RETENTION_HOURS", "APP_BASIC_AUTH", "LIBRARY_ENV", "DASHBOARDS_INDEX", "LOG_LEVEL", "LOG_FORMAT"];
 const GENERAL_ADVANCED = ["MAX_ROWS", "QUERY_TIMEOUT_MS", "KIBANA_EXPORT"];
 
 type Tab = "envs" | "llm" | "general";
@@ -767,6 +767,8 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
             ),
           })}
           {settingField("DASHBOARDS_INDEX")}
+          {settingField("LOG_LEVEL")}
+          {settingField("LOG_FORMAT")}
         </div>
         <Advanced count={GENERAL_ADVANCED.length}>{GENERAL_ADVANCED.map((k) => settingField(k))}</Advanced>
       </div>

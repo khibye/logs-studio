@@ -1,5 +1,6 @@
 import { config, kibanaBase, onConfigChange, withEnv } from "./config";
 import { es, HttpError } from "./elastic";
+import { log } from "./log";
 import type { Capabilities } from "../shared/recipe";
 
 /**
@@ -149,5 +150,14 @@ export async function getCapabilities(force = false): Promise<Capabilities> {
   }
 
   cache.set(envId, { at: Date.now(), value: caps });
+  log.debug("capabilities", {
+    elastic: caps.elastic.ok ? `ok ${caps.elastic.version ?? ""} via ${caps.elastic.via}` : `failed: ${caps.elastic.error}`,
+    logs: caps.logs.read ? "read" : caps.logs.reason,
+    library: caps.library.write ? "read+write" : caps.library.read ? "read" : caps.library.reason,
+    discover: caps.discover.enabled ? caps.discover.warning ?? "ok" : caps.discover.reason,
+    kibanaExport: caps.kibanaExport.enabled ? "ok" : caps.kibanaExport.reason,
+    deploys: caps.deploys.enabled || undefined,
+  });
+  if (!caps.elastic.ok) log.warn("capabilities.elastic_unavailable", { error: caps.elastic.error });
   return caps;
 }

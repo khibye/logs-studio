@@ -1,5 +1,6 @@
 import { config, kibanaBase } from "./config";
 import { HttpError, runEsql } from "./elastic";
+import { log } from "./log";
 import type { Panel, Recipe } from "../shared/recipe";
 
 /**
@@ -98,8 +99,10 @@ export async function exportToKibana(recipe: Recipe): Promise<{ url: string; id:
   });
   if (!res.ok) {
     const text = await res.text();
+    log.warn("kibana.export_failed", { id, status: res.status, error: text.slice(0, 500) });
     throw new HttpError(res.status, `Kibana rejected the dashboard (HTTP ${res.status}): ${text.slice(0, 500)}`);
   }
+  log.info("kibana.exported", { id, panels: panels.length, skipped: skipped.length || undefined });
   const publicBase = kibanaBase(config.kibana.publicUrl) ?? base;
   return { id, url: `${publicBase}/app/dashboards#/view/${encodeURIComponent(id)}`, skipped };
 }
