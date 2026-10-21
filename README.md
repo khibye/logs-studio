@@ -97,7 +97,7 @@
 כשמוגדר רק `KIBANA_URL` (ובלי `ELASTIC_URL`), כל הקריאות לאלסטיק עוברות דרך ה-**console proxy** של Kibana, אותו endpoint ש-Dev Tools משתמש בו. כל האפליקציה עובדת כך: צ'אט, דשבורדים, ספרייה משותפת, Discover.
 
 - המפתח צריך גם **הרשאת Dev Tools ב-Kibana**. בלעדיה תופיע הודעה ברורה בסטטוס.
-- ל-Kibana יש מגבלת זמן משלה לבקשות דרך ה-proxy (בדרך כלל 30 שניות, `elasticsearch.requestTimeout`). הגדלת `QUERY_TIMEOUT_MS` לא תעזור מעבר לה.
+- ל-Kibana יש מגבלת זמן משלה לבקשות דרך ה-proxy (בדרך כלל 30 שניות). שאילתות ES|QL רצות ברקע (`ESQL_ASYNC`) ונבדקות כל כמה שניות, כך שהמגבלה הזו לא חלה עליהן. ראו "פתרון תקלות" למטה.
 - `ELASTIC_CONNECTION` קובע את האופן: `auto` (ברירת מחדל: ישיר אם יש `ELASTIC_URL`, אחרת דרך Kibana), `direct` או `kibana`.
 - אם `KIBANA_URL` מצביע בטעות על Elasticsearch, תופיע אזהרה בחלון הסטטוס. כפתור Discover נשאר פעיל.
 - **"אין לך הרשאה לדף"** כשפותחים את Discover: הקישור נפתח עם המשתמש שלך ב-Kibana, לא עם המפתח של האפליקציה. בדרך כלל זה Space. אם בכתובת הרגילה שלך ב-Kibana יש `/s/<שם>/`, מגדירים `KIBANA_SPACE=<שם>`, ואת `KIBANA_URL` בלי החלק `/s/...`.
@@ -194,7 +194,8 @@ docker run --env-file .env -e ADMIN_PASSWORD=... -v logs-studio-data:/app/data -
 | `TIME_FIELD` | `@timestamp` | שדה הזמן שעליו מופעל טווח הזמן |
 | `DASHBOARDS_INDEX` | `ai-dashboards` | אינדקס הספרייה המשותפת |
 | `MAX_ROWS` | `1000` | מקסימום שורות לשאילתה |
-| `QUERY_TIMEOUT_MS` | `30000` | זמן המתנה לכל קריאה לאלסטיק |
+| `QUERY_TIMEOUT_MS` | `30000` | הזמן הכולל שמחכים לשאילתה |
+| `ESQL_ASYNC` | `auto` | שאילתות ES\|QL רצות ברקע: נשלחות ונבדקות כל 5 שניות, כך שאף בקשה לא נתקעת במגבלת הזמן של Kibana או של פרוקסי. לפני 8.13 חוזר לבד לשאילתה רגילה. `off` מכבה |
 | `KIBANA_URL` | | נדרש ל-"פתח ב-Discover", לייצוא ולחיבור דרך Kibana |
 | `KIBANA_PUBLIC_URL` | `KIBANA_URL` | אם הדפדפן מגיע ל-Kibana בכתובת אחרת מהשרת |
 | `KIBANA_SPACE` | | Space של Kibana לקישורים ולייצוא |
@@ -336,3 +337,22 @@ scripts/mock-*.ts         Elasticsearch, Kibana ומודל מזויפים לפי
 | `POST /api/admin/test` | בדיקת חיבור ורשימת מודלים |
 
 כל קריאה ל-`/api` רצה מול הסביבה שבכותרת `x-env` (ברירת מחדל: `main`).
+
+## פתרון תקלות
+
+**`Gateway timeout (HTTP 504)` בלוג או במסך**
+פרוקסי או load balancer שעומד לפני Elasticsearch או Kibana הפסיק לחכות, ולא Elasticsearch עצמו. בלוג השורה `es.error` מראה `gateway=true`, כמה זמן עבר (`ms`) ואיזה שרת ענה (`server`).
+- שאילתות ES|QL רצות ברקע (`ESQL_ASYNC=auto`): כל בקשה לאלסטיק קצרה מ-5 שניות, אז מגבלת הזמן של הפרוקסי כבר לא חלה. אם עדיין מתקבל 504, כנראה האשכול ישן מ-8.13 (בלוג תופיע השורה `esql.async_unsupported`). אז אפשר לקצר את טווח הזמן או לבקש להגדיל את ה-timeout של הפרוקסי.
+- אם השאילתה פשוט ארוכה מדי, תופיע הודעה `did not finish within …s (QUERY_TIMEOUT_MS)`. אפשר להגדיל את `QUERY_TIMEOUT_MS` בפאנל הניהול. השאילתה מבוטלת באלסטיק כשמוותרים עליה.
+
+**`network error` בדפדפן**
+החיבור בין הדפדפן לאפליקציה נקטע, בדרך כלל על ידי Ingress או פרוקסי לפני האפליקציה שסוגר בקשות ארוכות. הצ'אט שולח שורת keep-alive כל 10 שניות כדי שזה לא יקרה. אם זה ממשיך, מגדילים את ה-timeout ב-Ingress, למשל ב-nginx ingress:
+
+```yaml
+metadata:
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "300"
+    nginx.ingress.kubernetes.io/proxy-buffering: "off"
+```
+

@@ -24,11 +24,29 @@ export function setApiEnv(id: string) {
 }
 const envHeader = (): Record<string, string> => (currentEnv ? { "x-env": currentEnv } : {});
 
+const NETWORK_ERROR = /network ?error|failed to fetch|load failed|networkerror/i;
+
+/** Turns the browser's bare "network error" into something actionable. */
+function networkError(e: any, midStream = false): never {
+  if (e?.name === "AbortError" || !NETWORK_ERROR.test(String(e?.message ?? ""))) throw e;
+  throw new ApiError(
+    0,
+    midStream
+      ? "החיבור לשרת של האפליקציה נקטע באמצע התשובה. בדרך כלל זה פרוקסי או Ingress לפני האפליקציה שסוגר בקשות ארוכות (proxy-read-timeout). אפשר לנסות שוב."
+      : "אין תקשורת עם השרת של האפליקציה (network error). ייתכן שהשרת הופעל מחדש או שפרוקסי בדרך סגר את הבקשה. אפשר לנסות שוב.",
+  );
+}
+
 async function call<T>(path: string, init?: RequestInit): Promise<T> {
-  const res = await fetch(path, {
-    ...init,
-    headers: { "Content-Type": "application/json", ...envHeader(), ...(init?.headers ?? {}) },
-  });
+  let res: Response;
+  try {
+    res = await fetch(path, {
+      ...init,
+      headers: { "Content-Type": "application/json", ...envHeader(), ...(init?.headers ?? {}) },
+    });
+  } catch (e) {
+    networkError(e);
+  }
   const text = await res.text();
   let body: any;
   try {
@@ -135,12 +153,17 @@ export async function streamChat(
   onEvent: (e: ChatEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {
-  const res = await fetch("/api/chat", {
-    method: "POST",
-    headers: { "Content-Type": "application/json", ...envHeader() },
-    body: JSON.stringify(body),
-    signal,
-  });
+  let res: Response;
+  try {
+    res = await fetch("/api/chat", {
+      method: "POST",
+      headers: { "Content-Type": "application/json", ...envHeader() },
+      body: JSON.stringify(body),
+      signal,
+    });
+  } catch (e) {
+    networkError(e);
+  }
   if (!res.ok || !res.body) {
     let msg = `שגיאה ${res.status}`;
     try {
@@ -148,19 +171,33 @@ export async function streamChat(
     } catch {}
     throw new ApiError(res.status, msg);
   }
+  let sawDone = false;
+  const handle = (e: ChatEvent) => {
+    if (e.type === "done") sawDone = true;
+    onEvent(e);
+  };
   const reader = res.body.getReader();
   const decoder = new TextDecoder();
   let buf = "";
   for (;;) {
-    const { value, done } = await reader.read();
+    let chunk: ReadableStreamReadResult<Uint8Array>;
+    try {
+      chunk = await reader.read();
+    } catch (e) {
+      if (signal.aborted) throw e;
+      networkError(e, true);
+    }
+    const { value, done } = chunk;
     if (done) break;
     buf += decoder.decode(value, { stream: true });
     let nl: number;
     while ((nl = buf.indexOf("\n")) >= 0) {
       const line = buf.slice(0, nl).trim();
       buf = buf.slice(nl + 1);
-      if (line) onEvent(JSON.parse(line) as ChatEvent);
+      if (line) handle(JSON.parse(line) as ChatEvent);
     }
   }
-  if (buf.trim()) onEvent(JSON.parse(buf) as ChatEvent);
+  if (buf.trim()) handle(JSON.parse(buf) as ChatEvent);
+  // The server always ends with "done"; a stream that just stops was closed by something in between.
+  if (!sawDone && !signal.aborted) networkError(new TypeError("network error"), true);
 }

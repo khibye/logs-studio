@@ -71,11 +71,13 @@ function buildEnv(id: string, name: string, v: (key: string) => string | undefin
       logContext: cleanContext(v("LOG_CONTEXT")),
       /** ES|QL returning deploy / change events (time + description columns). Empty = none. */
       deployQuery: (v("DEPLOY_QUERY") ?? "").trim(),
-      // The next three are global (same in every environment).
+      // The rest are global (same in every environment).
       dashboardsIndex: rawValue("DASHBOARDS_INDEX") || "ai-dashboards",
       /** Hard cap on rows any query may return. */
       maxRows: Math.max(1, num(rawValue("MAX_ROWS"), 1000)),
       queryTimeoutMs: Math.max(1000, num(rawValue("QUERY_TIMEOUT_MS"), 30000)),
+      /** Run ES|QL asynchronously (submit + short polls), so proxies' time limits don't apply. */
+      esqlAsync: (rawValue("ESQL_ASYNC") ?? "auto") !== "off",
     },
     kibana: {
       /** Address the server uses to call Kibana (proxy, export, version check). */

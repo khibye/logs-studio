@@ -165,6 +165,9 @@ app.post(
     const emit = (e: ChatEvent) => {
       if (!res.writableEnded) res.write(JSON.stringify(e) + "\n");
     };
+    // Proxies / ingresses in front of the app often close a response that stays silent for 30-60s
+    // (the browser then shows "network error"). A small line every 10s keeps the stream alive.
+    const heartbeat = setInterval(() => emit({ type: "ping" }), 10_000);
     try {
       await runAgent({
         messages: body.messages.slice(-30),
@@ -179,6 +182,8 @@ app.post(
         const status = err?.status ? ` (HTTP ${err.status})` : "";
         emit({ type: "error", message: `${err?.message ?? "Unexpected error"}${status} · req ${requestId()}` });
       }
+    } finally {
+      clearInterval(heartbeat);
     }
     emit({ type: "done" });
     res.end();

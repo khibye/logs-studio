@@ -6,6 +6,9 @@
  *
  *   MOCK_ES_PORT=9200  MOCK_WRITE=1 (grant create_doc on the dashboards index)
  *   MOCK_NO_INDEX=1    (pretend the dashboards index does not exist)
+ *   MOCK_SLOW_MS=40000 (every ES|QL query takes this long)
+ *   MOCK_NO_ASYNC=1    (no async ES|QL endpoint, like Elasticsearch before 8.13)
+ *   MOCK_GATEWAY_TIMEOUT_MS=20000 (the fake Kibana answers an HTML 504 when a call takes longer)
  */
 import express from "express";
 
@@ -172,13 +175,55 @@ app.post("/_security/user/_has_privileges", (req, res) => {
   res.json({ username: "mock-key", has_all_requested: false, index });
 });
 
-app.post("/_query", (req, res) => {
+const SLOW_MS = Number(process.env.MOCK_SLOW_MS ?? 0);
+const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+const secs = (v: unknown, def: number) => {
+  const m = /^(\d+)(ms|s|m)?$/.exec(String(v ?? ""));
+  if (!m) return def;
+  return Number(m[1]) * (m[2] === "ms" ? 1 : m[2] === "m" ? 60000 : 1000);
+};
+
+function runBody(body: any) {
   // Respect the time window the app sends (filter.range.<field>.lte), like Elasticsearch would.
-  const range = req.body.filter?.range ? (Object.values(req.body.filter.range)[0] as any) : undefined;
+  const range = body.filter?.range ? (Object.values(body.filter.range)[0] as any) : undefined;
   const end = range?.lte ? Date.parse(range.lte) : Date.now();
-  const out = esql(String(req.body.query ?? ""), Number.isFinite(end) ? end : Date.now());
+  return esql(String(body.query ?? ""), Number.isFinite(end) ? end : Date.now());
+}
+
+app.post("/_query", async (req, res) => {
+  if (SLOW_MS) await sleep(SLOW_MS);
+  const out = runBody(req.body);
   res.status(out.status).json(out.body);
 });
+
+// Async ES|QL: submit, then GET until is_running is false.
+type Job = { readyAt: number; out: { status: number; body: any } };
+const jobs = new Map<string, Job>();
+let jobSeq = 0;
+async function waitJob(id: string, waitMs: number, res: express.Response) {
+  const job = jobs.get(id);
+  if (!job) return res.status(404).json({ error: { type: "resource_not_found_exception", reason: id } });
+  const left = job.readyAt - Date.now();
+  if (left > waitMs) {
+    await sleep(waitMs);
+    return res.json({ id, is_running: true });
+  }
+  if (left > 0) await sleep(left);
+  res.status(job.out.status).json({ ...job.out.body, id, is_running: false });
+}
+if (process.env.MOCK_NO_ASYNC !== "1") {
+  app.post("/_query/async", async (req, res) => {
+    const id = `job${++jobSeq}`;
+    jobs.set(id, { readyAt: Date.now() + SLOW_MS, out: runBody(req.body) });
+    await waitJob(id, secs(req.body.wait_for_completion_timeout, 1000), res);
+  });
+  app.get("/_query/async/:id", (req, res) => waitJob(req.params.id, secs(req.query.wait_for_completion_timeout, 0), res));
+  app.delete("/_query/async/:id", (req, res) => {
+    const had = jobs.delete(req.params.id);
+    console.log(`async ${req.params.id} deleted (${had ? "ok" : "unknown"})`);
+    res.status(had ? 200 : 404).json({ acknowledged: had });
+  });
+}
 
 const idxGuard = (req: express.Request, res: express.Response) => {
   if (NO_INDEX || req.params.index !== DASH) {
@@ -248,11 +293,18 @@ kibana.post("/api/console/proxy", async (req, res) => {
     return res.status(403).json({ statusCode: 403, error: "Forbidden", message: "Forbidden" });
   const p = String(req.query.path ?? "");
   const method = String(req.query.method ?? "GET").toUpperCase();
-  const r = await fetch(`http://localhost:${PORT}/${p.replace(/^\//, "")}`, {
+  const GATEWAY_MS = Number(process.env.MOCK_GATEWAY_TIMEOUT_MS ?? 0);
+  const call = fetch(`http://localhost:${PORT}/${p.replace(/^\//, "")}`, {
     method,
     headers: { "content-type": "application/json", authorization: String(req.headers.authorization) },
-    body: method === "GET" || method === "HEAD" ? undefined : JSON.stringify(req.body ?? {}),
+    body: method === "GET" || method === "HEAD" || method === "DELETE" ? undefined : JSON.stringify(req.body ?? {}),
   });
+  const r = GATEWAY_MS ? await Promise.race([call, sleep(GATEWAY_MS).then(() => null)]) : await call;
+  if (!r) {
+    // Like an nginx / load balancer in front of Kibana giving up.
+    res.status(504).setHeader("server", "nginx").type("html").send("<html><head><title>504 Gateway Time-out</title></head><body><center><h1>504 Gateway Time-out</h1></center><hr><center>nginx</center></body></html>");
+    return;
+  }
   res.status(r.status).setHeader("content-type", "application/json").send(await r.text());
 });
 const KPORT = Number(process.env.MOCK_KIBANA_PORT ?? 5601);

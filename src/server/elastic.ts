@@ -21,6 +21,17 @@ function esReason(body: any, status: number): string {
   return `Elasticsearch returned HTTP ${status}`;
 }
 
+/** Not an Elasticsearch / Kibana JSON error: an HTML or empty page from something in between. */
+function isGatewayPage(body: any): boolean {
+  return typeof body !== "object" || body === null || (!body.error && typeof body.statusCode !== "number");
+}
+
+/** Readable text from an HTML / plain error page, for the log. */
+function snippet(body: unknown): string | undefined {
+  if (typeof body !== "string" || !body.trim()) return undefined;
+  return body.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, 160);
+}
+
 /** A response produced by Kibana itself, not forwarded from Elasticsearch. */
 function isKibanaError(body: any): boolean {
   return typeof body?.statusCode === "number" && typeof body?.message === "string" && !body?.error?.type;
@@ -96,15 +107,35 @@ export async function es<T = any>(
   // Some Kibana versions report the upstream status in a header.
   const status = Number(res.headers.get("x-console-proxy-status-code")) || res.status;
   const ms = Date.now() - t0;
+  // 502/503/504 as an HTML or empty page: a load balancer / ingress / proxy between the app and
+  // Elasticsearch gave up (usually its own time limit), not Elasticsearch itself.
+  const gateway = status >= 502 && status <= 504 && isGatewayPage(body);
   if (status >= 400 && !(status === 404 && opts.allow404)) {
-    log.warn("es.error", { call: what, via: viaKibana ? "kibana" : "direct", status, ms, error: esReason(body, status) });
+    log.warn("es.error", {
+      call: what,
+      via: viaKibana ? "kibana" : "direct",
+      status,
+      ms,
+      error: gateway ? undefined : esReason(body, status),
+      gateway: gateway || undefined,
+      server: gateway ? res.headers.get("server") ?? undefined : undefined,
+      page: gateway ? snippet(body) : undefined,
+    });
   } else {
     log.debug("es.call", { call: what, via: viaKibana ? "kibana" : "direct", status, ms, bytes: text.length });
   }
   if (status >= 400) {
     if (status === 404 && opts.allow404 && !(viaKibana && isKibanaError(body))) return body as T;
     let msg = esReason(body, status);
-    if (viaKibana && isKibanaError(body)) {
+    if (gateway) {
+      const secs = Math.round(ms / 1000);
+      const via = viaKibana ? "Kibana" : "Elasticsearch";
+      msg =
+        status === 504
+          ? `Gateway timeout (HTTP 504) after ${secs}s: a proxy or load balancer in front of ${via} stopped waiting. ` +
+            `The query is probably heavier than that proxy's time limit: try a shorter time range or a lighter query.`
+          : `HTTP ${status} from a proxy or load balancer in front of ${via} (after ${secs}s), not from ${via} itself.`;
+    } else if (viaKibana && isKibanaError(body)) {
       if (status === 401) msg = `Kibana rejected the API key (401): ${msg}`;
       else if (status === 403)
         msg = `Kibana refused the console proxy (403): ${msg}. The API key needs the Dev Tools privilege in Kibana.`;
@@ -186,6 +217,88 @@ export function queryWindow(
   return { start: end - dur, end };
 }
 
+type EsqlResponse = {
+  columns: { name: string; type: string }[];
+  values: unknown[][];
+  took?: number;
+  id?: string;
+  is_running?: boolean;
+};
+
+/** Environments whose Elasticsearch has no async ES|QL endpoint (before 8.13): sync only. */
+const asyncUnsupported = new Set<string>();
+const POLL_MS = 5000;
+
+function asyncMissing(err: unknown): boolean {
+  return (
+    err instanceof HttpError &&
+    [400, 404, 405].includes(err.status) &&
+    /no handler found|unrecognized|request \[\/?_query\/async/i.test(err.message)
+  );
+}
+
+/** Frees (or, if still running, cancels) an async query. Best effort. */
+function dropAsync(id: string) {
+  es(`/_query/async/${encodeURIComponent(id)}`, { method: "DELETE", allow404: true }).catch((err) =>
+    log.debug("esql.async_delete_failed", { error: err?.message }),
+  );
+}
+
+/**
+ * Runs ES|QL asynchronously: submit, then poll every few seconds. Each HTTP call is short, so a
+ * long query never trips the time limit of Kibana's console proxy or of a gateway / ingress in
+ * front of Elasticsearch (those answer HTTP 504). QUERY_TIMEOUT_MS bounds the whole query.
+ * Falls back to the plain synchronous endpoint when the cluster has no async ES|QL.
+ */
+async function esqlCall(body: Record<string, unknown>, signal?: AbortSignal): Promise<EsqlResponse> {
+  const envId = config.env.id;
+  if (!config.elastic.esqlAsync || asyncUnsupported.has(envId)) {
+    return es<EsqlResponse>("/_query?format=json", { body, signal });
+  }
+  const t0 = Date.now();
+  const deadline = t0 + config.elastic.queryTimeoutMs;
+  const wait = () => `${Math.max(1, Math.min(POLL_MS, deadline - Date.now()) / 1000).toFixed(0)}s`;
+
+  let res: EsqlResponse;
+  try {
+    res = await es<EsqlResponse>("/_query/async?format=json", {
+      body: { ...body, wait_for_completion_timeout: wait(), keep_alive: "5m" },
+      signal,
+    });
+  } catch (err) {
+    if (!asyncMissing(err)) throw err;
+    asyncUnsupported.add(envId);
+    log.info("esql.async_unsupported", { error: (err as Error).message });
+    return es<EsqlResponse>("/_query?format=json", { body, signal });
+  }
+  if (!res.is_running) {
+    if (res.id) dropAsync(res.id);
+    return res;
+  }
+
+  const id = res.id!;
+  let polls = 0;
+  try {
+    for (;;) {
+      if (Date.now() >= deadline) {
+        log.warn("esql.timeout", { ms: Date.now() - t0, polls, timeoutMs: config.elastic.queryTimeoutMs });
+        throw new HttpError(
+          504,
+          `The query did not finish within ${Math.round(config.elastic.queryTimeoutMs / 1000)}s (QUERY_TIMEOUT_MS). Try a shorter time range or a lighter query.`,
+        );
+      }
+      polls++;
+      res = await es<EsqlResponse>(`/_query/async/${encodeURIComponent(id)}?wait_for_completion_timeout=${wait()}`, { signal });
+      if (!res.is_running) {
+        log.debug("esql.async_done", { ms: Date.now() - t0, polls });
+        return res;
+      }
+    }
+  } finally {
+    dropAsync(id); // frees the stored result, or cancels the query if we gave up / the user left
+  }
+}
+
 /**
  * Runs a guarded ES|QL query. The time window (the dashboard's range, shifted
  * back for comparisons, or an explicit window) is applied as a filter on the
@@ -215,9 +328,9 @@ export async function runEsql(
   };
   if (/\?_tstart|\?_tend/.test(guarded)) body.params = [{ _tstart: startIso }, { _tend: endIso }];
   const t0 = Date.now();
-  let res: { columns: { name: string; type: string }[]; values: unknown[][]; took?: number };
+  let res: EsqlResponse;
   try {
-    res = await es("/_query?format=json", { body, signal: opts.signal });
+    res = await esqlCall(body, opts.signal);
   } catch (err: any) {
     log.info("esql.failed", { ms: Date.now() - t0, error: err.message, query: guarded });
     throw err;

@@ -141,6 +141,8 @@ export type ChatEvent =
   | { type: "tool_end"; id: string; ok: boolean; summary: string }
   | { type: "recipe"; recipe: Recipe }
   | { type: "error"; message: string }
+  /** Keep-alive while the model or Elasticsearch is busy, so proxies don't close an idle stream. */
+  | { type: "ping" }
   | { type: "done" };
 
 export type ChatMessage = { role: "user" | "assistant"; content: string };
