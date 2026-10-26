@@ -66,6 +66,15 @@ export const SETTINGS: SettingDef[] = [
   { key: "DASHBOARDS_INDEX", group: "elastic", kind: "string", default: "ai-dashboards", label: "אינדקס הספרייה המשותפת" },
   { key: "MAX_ROWS", group: "elastic", kind: "number", default: "1000", min: 1, label: "מקסימום שורות לשאילתה" },
   {
+    key: "EXPORT_MAX_ROWS",
+    group: "elastic",
+    kind: "number",
+    default: "10000",
+    min: 1,
+    label: "מקסימום שורות בהורדת CSV",
+    help: "ES|QL עוצר ב-10,000 שורות אלא אם האשכול הוגדר אחרת (esql.query.result_truncation_max_size).",
+  },
+  {
     key: "QUERY_TIMEOUT_MS",
     group: "elastic",
     kind: "number",

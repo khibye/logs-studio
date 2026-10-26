@@ -3,6 +3,7 @@ import { api } from "../api";
 import { Chart, numberFmt, type PointInfo, type PrevOverlay } from "./Chart";
 import { Icon } from "./icons";
 import { discoverUrl } from "../../shared/discover";
+import { downloadCsv, toCsv } from "../csv";
 import {
   TIME_RANGES,
   chartCompare,
@@ -164,6 +165,8 @@ export function PanelView(props: {
   const [showQuery, setShowQuery] = useState(false);
   const [showData, setShowData] = useState(false);
   const [point, setPoint] = useState<{ p: PointInfo; side: number } | null>(null);
+  const [exporting, setExporting] = useState(false);
+  const [exportError, setExportError] = useState<string | null>(null);
   const popRef = useRef<HTMLDivElement>(null);
 
   const isChart = ["line", "area", "bar", "hbar"].includes(panel.type);
@@ -199,6 +202,31 @@ export function PanelView(props: {
       document.removeEventListener("keydown", onKey);
     };
   }, [point]);
+
+  /** Downloads what the panel shows as CSV. A result cut at MAX_ROWS is fetched again with the larger export cap. */
+  const exportCsv = async () => {
+    if (!panel.esql || exporting) return;
+    setExporting(true);
+    setExportError(null);
+    try {
+      const parts = await Promise.all(
+        sides
+          .filter((s) => s.state.data)
+          .map(async (s) => ({
+            label: s.envName,
+            data: s.state.data!.truncated ? await api.query(panel.esql!, range, { env: s.env, export: true }) : s.state.data!,
+          })),
+      );
+      if (!parts.length) throw new Error("אין עדיין נתונים להורדה");
+      const capped = parts.some((p) => p.data.truncated);
+      downloadCsv([panel.title, sides.length > 1 ? "" : multiEnv ? envName ?? "" : "", TIME_RANGES[range].label].join(" "), toCsv(parts));
+      if (capped) setExportError("הקובץ ירד, אבל הגיע למגבלת השורות להורדה (EXPORT_MAX_ROWS) ולכן חלקי.");
+    } catch (e: any) {
+      setExportError(`ההורדה נכשלה: ${e.message}`);
+    } finally {
+      setExporting(false);
+    }
+  };
 
   const height = panel.type === "metric" ? 0 : panel.width === "third" && !compareEnv ? 200 : 260;
 
@@ -323,6 +351,18 @@ export function PanelView(props: {
               <Icon.Code size={15} />
             </button>
           )}
+          {panel.esql && (
+            <button
+              type="button"
+              className="icon-btn"
+              onClick={exportCsv}
+              disabled={exporting || !main.data}
+              title="הורד CSV"
+              aria-label="הורד CSV"
+            >
+              {exporting ? <span className="spinner" aria-hidden="true" /> : <Icon.Download size={15} />}
+            </button>
+          )}
           {isChart && (
             <button
               type="button"
@@ -358,7 +398,15 @@ export function PanelView(props: {
           {panel.esql}
         </pre>
       )}
-      {main.data?.truncated && <div className="panel-note">התוצאה קוצצה למגבלת השורות</div>}
+      {main.data?.truncated && <div className="panel-note">התוצאה קוצצה למגבלת השורות. בהורדת CSV יורדות יותר שורות.</div>}
+      {exportError && (
+        <div className="panel-note" role="status">
+          {exportError}{" "}
+          <button type="button" className="link-btn" onClick={() => setExportError(null)}>
+            סגור
+          </button>
+        </div>
+      )}
       {isChart && !showData && main.data && main.data.values.length > 0 && (
         <div className="panel-hint">
           {prevOverlay && <span className="legend-dash">{prevOverlay.label}</span>}

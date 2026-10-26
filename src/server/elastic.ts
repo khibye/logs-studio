@@ -168,7 +168,7 @@ function stripComments(q: string): string {
   return q.replace(/\/\*[\s\S]*?\*\//g, " ").replace(/\/\/[^\n]*/g, " ");
 }
 
-export function guardEsql(raw: string, opts: { trusted?: boolean } = {}): string {
+export function guardEsql(raw: string, opts: { trusted?: boolean; cap?: number } = {}): string {
   const query = raw.trim().replace(/;+\s*$/, "");
   if (!query) throw new HttpError(400, "Empty query");
   if (query.length > 4000) throw new HttpError(400, "Query is too long (max 4000 characters)");
@@ -191,7 +191,7 @@ export function guardEsql(raw: string, opts: { trusted?: boolean } = {}): string
     }
   }
 
-  const max = config.elastic.maxRows;
+  const max = opts.cap ?? config.elastic.maxRows;
   const commands = clean.split("|").map((c) => c.trim());
   const last = commands[commands.length - 1];
   const lim = /^LIMIT\s+(\d+)$/i.exec(last);
@@ -314,9 +314,12 @@ export async function runEsql(
     compare?: Compare;
     window?: { from: number; to: number };
     trusted?: boolean;
+    /** Row cap instead of MAX_ROWS (CSV export uses EXPORT_MAX_ROWS). */
+    cap?: number;
   } = {},
 ): Promise<QueryResult> {
-  let guarded = guardEsql(query, { trusted: opts.trusted });
+  const cap = opts.cap ?? config.elastic.maxRows;
+  let guarded = guardEsql(query, { trusted: opts.trusted, cap });
   if (opts.maxRows && opts.maxRows < config.elastic.maxRows) guarded += `\n| LIMIT ${opts.maxRows}`;
 
   const { start, end } = queryWindow(range, opts);
@@ -350,7 +353,7 @@ export async function runEsql(
     columns: res.columns ?? [],
     values: res.values ?? [],
     took: res.took ?? Date.now() - t0,
-    truncated: (res.values?.length ?? 0) >= config.elastic.maxRows,
+    truncated: (res.values?.length ?? 0) >= cap,
   };
 }
 

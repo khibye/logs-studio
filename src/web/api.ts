@@ -68,10 +68,14 @@ export const api = {
   capabilities: (refresh = false) => call<Capabilities>(`/api/capabilities${refresh ? "?refresh=1" : ""}`),
 
   /** `env` overrides the current environment (side-by-side comparison); `compare` runs it on an earlier period. */
-  query: (esql: string, time_range: TimeRangeKey, opts: { signal?: AbortSignal; compare?: Compare; env?: string } = {}) =>
+  query: (
+    esql: string,
+    time_range: TimeRangeKey,
+    opts: { signal?: AbortSignal; compare?: Compare; env?: string; export?: boolean } = {},
+  ) =>
     call<QueryResult>("/api/query", {
       method: "POST",
-      body: JSON.stringify({ esql, time_range, compare: opts.compare }),
+      body: JSON.stringify({ esql, time_range, compare: opts.compare, export: opts.export || undefined }),
       signal: opts.signal,
       headers: opts.env ? { "x-env": opts.env } : undefined,
     }),

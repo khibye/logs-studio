@@ -40,7 +40,7 @@ const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT"
 const LLM_FIELDS = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_MODELS"];
 const LLM_ADVANCED = ["LLM_STREAM", "LLM_MAX_STEPS", "LLM_TEMPERATURE"];
 const GENERAL_FIELDS = ["CHAT_RETENTION_HOURS", "APP_BASIC_AUTH", "LIBRARY_ENV", "DASHBOARDS_INDEX", "LOG_LEVEL", "LOG_FORMAT"];
-const GENERAL_ADVANCED = ["MAX_ROWS", "QUERY_TIMEOUT_MS", "ESQL_ASYNC", "KIBANA_EXPORT"];
+const GENERAL_ADVANCED = ["MAX_ROWS", "EXPORT_MAX_ROWS", "QUERY_TIMEOUT_MS", "ESQL_ASYNC", "KIBANA_EXPORT"];
 
 type Tab = "envs" | "llm" | "general";
 function tabOf(key: string): Tab {
@@ -61,6 +61,7 @@ const SHORT: Record<string, { label?: string; help?: string }> = {
   APP_BASIC_AUTH: { help: "user:password. טעות כאן נועלת גם את הניהול (תיקון: מחיקת settings.json)" },
   LIBRARY_ENV: { label: "הספרייה נשמרת בסביבה", help: "כל הסביבות משתמשות באותה ספרייה" },
   QUERY_TIMEOUT_MS: { label: "זמן המתנה לשאילתה (ms)" },
+  EXPORT_MAX_ROWS: { label: "מקסימום שורות ב-CSV" },
 };
 
 // ---------------------------------------------------------------------------

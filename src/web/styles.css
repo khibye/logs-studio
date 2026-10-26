@@ -284,6 +284,8 @@ select.input { padding: 0 10px; }
 .badge.accent { color: var(--accent-dark); background: var(--accent-soft); border-color: transparent; }
 .badge.warn { color: var(--warn-ink); background: var(--warn-bg); border-color: transparent; }
 .link-btn { border: 0; background: none; padding: 0 2px; color: var(--accent); font-size: 12px; cursor: pointer; text-decoration: underline; }
+.icon-btn:disabled { opacity: .45; cursor: default; }
+.icon-btn .spinner { width: 13px; height: 13px; }
 .savebar { position: fixed; bottom: 0; inset-inline: 0; z-index: 25; display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 10px; padding: 12px max(24px, calc((100vw - 980px) / 2 + 24px)); background: var(--surface); border-top: 1px solid var(--border); box-shadow: 0 -6px 20px rgba(21, 23, 26, 0.06); }
 
 /* ---- Environments ---- */

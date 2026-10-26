@@ -75,6 +75,8 @@ function buildEnv(id: string, name: string, v: (key: string) => string | undefin
       dashboardsIndex: rawValue("DASHBOARDS_INDEX") || "ai-dashboards",
       /** Hard cap on rows any query may return. */
       maxRows: Math.max(1, num(rawValue("MAX_ROWS"), 1000)),
+      /** Row cap for "download CSV" (ES|QL itself stops at 10,000 unless the cluster allows more). */
+      exportMaxRows: Math.max(1, num(rawValue("EXPORT_MAX_ROWS"), 10000)),
       queryTimeoutMs: Math.max(1000, num(rawValue("QUERY_TIMEOUT_MS"), 30000)),
       /** Run ES|QL asynchronously (submit + short polls), so proxies' time limits don't apply. */
       esqlAsync: (rawValue("ESQL_ASYNC") ?? "auto") !== "off",

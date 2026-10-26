@@ -112,11 +112,16 @@ app.post(
         time_range: RangeSchema,
         /** Run the same query on an earlier period, for comparisons. */
         compare: z.enum(["previous", "week"]).optional(),
+        /** For "download CSV": up to EXPORT_MAX_ROWS rows instead of MAX_ROWS. */
+        export: z.boolean().optional(),
       })
       .parse(req.body);
     const ctrl = new AbortController();
     res.on("close", () => !res.writableEnded && ctrl.abort());
-    res.json(await runEsql(body.esql, body.time_range, { signal: ctrl.signal, compare: body.compare }));
+    const cap = body.export ? Math.max(config.elastic.exportMaxRows, config.elastic.maxRows) : undefined;
+    const result = await runEsql(body.esql, body.time_range, { signal: ctrl.signal, compare: body.compare, cap });
+    if (body.export) log.info("export.csv", { rows: result.values.length, truncated: result.truncated || undefined });
+    res.json(result);
   }),
 );
 
