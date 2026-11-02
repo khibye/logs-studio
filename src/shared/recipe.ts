@@ -123,6 +123,8 @@ export type Capabilities = {
   discover: { enabled: boolean; baseUrl?: string; reason?: string; warning?: string };
   chat: { retentionHours: number };
   admin: { enabled: boolean };
+  /** When the server was built — tells whether a new version is really deployed. */
+  build?: string;
   /** The environment these capabilities describe, and all environments to choose from. */
   env: { id: string; name: string };
   environments: { id: string; name: string }[];

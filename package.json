@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "scripts": {
     "dev": "concurrently -k -n server,web -c cyan,magenta \"tsx watch src/server/index.ts\" \"vite\"",
-    "build": "vite build && esbuild src/server/index.ts --bundle --platform=node --format=esm --packages=external --target=node20 --outfile=dist/server.js",
+    "build": "vite build && esbuild src/server/index.ts --define:__BUILD_TIME__=\"\\\"$(date -u +%Y-%m-%dT%H:%M:%SZ)\\\"\" --bundle --platform=node --format=esm --packages=external --target=node20 --outfile=dist/server.js",
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "mock": "concurrently -k -n es,llm \"tsx scripts/mock-elastic.ts\" \"tsx scripts/mock-llm.ts\""

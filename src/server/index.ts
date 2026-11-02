@@ -14,6 +14,7 @@ import { adminRouter } from "./admin";
 import { log, logLevel, requestId, safeHost, setLogEnv, withRequest } from "./log";
 import { ScopeSchema } from "../shared/scope";
 import { scopeFields, topValues } from "./schema";
+import { BUILD } from "./build";
 import { RecipeSchema, TIME_RANGE_KEYS, type ChatEvent, type TimeRangeKey } from "../shared/recipe";
 
 /**
@@ -86,7 +87,7 @@ app.use("/api", (req, res, next) => {
 });
 
 app.get("/api/health", (_req, res) => {
-  res.json({ ok: true });
+  res.json({ ok: true, build: BUILD });
 });
 
 app.get(
@@ -301,7 +302,7 @@ process.on("uncaughtException", (err) => {
 });
 
 app.listen(config.port, () => {
-  log.info("server.started", { port: config.port, logLevel: logLevel(), admin: Boolean(config.adminPassword) });
+  log.info("server.started", { build: BUILD, port: config.port, logLevel: logLevel(), admin: Boolean(config.adminPassword) });
   for (const env of config.environments) {
     log.info("server.environment", {
       id: env.id,

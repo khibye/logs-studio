@@ -1,3 +1,4 @@
+import { BUILD } from "./build";
 import { config, kibanaBase, onConfigChange, withEnv } from "./config";
 import { es, HttpError } from "./elastic";
 import { log } from "./log";
@@ -96,6 +97,7 @@ export async function getCapabilities(force = false): Promise<Capabilities> {
     kibanaExport: { enabled: false, experimental: true },
     chat: { retentionHours: config.chatRetentionHours },
     admin: { enabled: Boolean(config.adminPassword) },
+    build: BUILD,
     env: { id: config.env.id, name: config.env.name },
     deploys: { enabled: Boolean(config.elastic.deployQuery) },
     environments: config.environments.map((e) => ({ id: e.id, name: e.name })),

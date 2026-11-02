@@ -89,6 +89,16 @@ function Status({ caps, onRecheck }: { caps: Capabilities | null; onRecheck: () 
                 </a>
               )}
             </div>
+            {caps.build && (
+              <div className="caps-build">
+                גרסה:{" "}
+                <bdi dir="ltr">
+                  {caps.build === "dev"
+                    ? "dev"
+                    : new Date(caps.build).toLocaleString("he-IL", { dateStyle: "short", timeStyle: "short" })}
+                </bdi>
+              </div>
+            )}
           </div>
         ) : (
           <div className="menu-note">בודק…</div>
