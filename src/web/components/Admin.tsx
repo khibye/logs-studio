@@ -32,10 +32,10 @@ function writePw(pw: string) {
 
 /** Per-environment fields (same names for the main environment's settings and inside ENVIRONMENTS). */
 const ENV_MAIN_FIELDS = ["ELASTIC_URL", "ELASTIC_API_KEY", "KIBANA_URL", "KIBANA_SPACE"];
-const ENV_DATA_FIELDS = ["LOG_INDEX_PATTERNS", "LOG_CONTEXT", "DEPLOY_QUERY"];
+const ENV_DATA_FIELDS = ["LOG_INDEX_PATTERNS", "LOG_CONTEXT", "SCOPE_FIELDS", "DEPLOY_QUERY"];
 const ENV_ADVANCED_FIELDS = ["ELASTIC_CONNECTION", "KIBANA_PUBLIC_URL", "KIBANA_API_KEY", "TIME_FIELD"];
 const ENV_FIELDS = [...ENV_MAIN_FIELDS, ...ENV_DATA_FIELDS, ...ENV_ADVANCED_FIELDS];
-const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT", "DEPLOY_QUERY"]);
+const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT", "DEPLOY_QUERY", "SCOPE_FIELDS"]);
 
 const LLM_FIELDS = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_MODELS"];
 const LLM_ADVANCED = ["LLM_STREAM", "LLM_MAX_STEPS", "LLM_TEMPERATURE"];
@@ -54,6 +54,7 @@ const SHORT: Record<string, { label?: string; help?: string }> = {
   ELASTIC_URL: { help: "ריק = חיבור דרך Kibana. ב-Kibana: תפריט העזרה ← Connection details" },
   LOG_INDEX_PATTERNS: { label: "אינדקסים", help: "מופרד בפסיקים, למשל logs-myapp-*" },
   LOG_CONTEXT: { help: "מה כל שדה אומר, איך מזהים שגיאה, יחידות. המודל מקבל את זה בכל שיחה." },
+  SCOPE_FIELDS: { label: "שדות למיקוד", help: "מוצעים בסרגל המיקוד בצ'אט. ריק = זיהוי אוטומטי (namespace, pod, service…)" },
   DEPLOY_QUERY: { label: "פריסות (ES|QL)", help: "מחזירה עמודת זמן ותיאור, למשל: FROM deploys-* | KEEP @timestamp, service.name, version" },
   ELASTIC_CONNECTION: { help: "auto: ישיר אם יש כתובת Elasticsearch, אחרת דרך Kibana (דורש הרשאת Dev Tools)" },
   KIBANA_PUBLIC_URL: { help: "רק אם הדפדפן מגיע ל-Kibana בכתובת אחרת מהשרת" },

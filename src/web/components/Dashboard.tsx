@@ -221,6 +221,20 @@ export function Dashboard(props: {
           <div className="board-meta">
             <StatusPill recipe={recipe} dirty={dirty} origin={origin} />
             <span className="muted">{recipe.panels.length} פאנלים · ES|QL · חי</span>
+            {recipe.scope?.length ? (
+              <span className="board-scope" title="המיקוד חל על כל הפאנלים. משנים אותו בסרגל המיקוד בצ'אט.">
+                מיקוד:
+                {recipe.scope.map((f, i) => (
+                  <span key={i} className={`scope-chip ${f.exclude ? "not" : ""}`}>
+                    <span className="scope-chip-main" dir="ltr">
+                      <span className="scope-field">{f.field}</span>
+                      <span className="scope-op">{f.exclude ? "≠" : "="}</span>
+                      <span className="scope-values">{f.values.join(" | ")}</span>
+                    </span>
+                  </span>
+                ))}
+              </span>
+            ) : null}
             {recipe.forked_from && (
               <a className="muted" href={savedHash(recipe.forked_from.id, recipe.forked_from.version)}>
                 עותק של גרסה {recipe.forked_from.version} של דשבורד אחר
@@ -367,6 +381,7 @@ export function Dashboard(props: {
             panel={p}
             range={range}
             tick={tick}
+            scope={recipe.scope}
             discoverBase={caps?.discover.enabled ? caps.discover.baseUrl : undefined}
             envId={envId}
             envName={caps?.env.name}

@@ -29,6 +29,8 @@ const FIELDS: [string, string][] = [
   ["log.level", "keyword"],
   ["message", "text"],
   ["host.name", "keyword"],
+  ["kubernetes.namespace", "keyword"],
+  ["kubernetes.pod.name", "keyword"],
 ];
 const TAG = process.env.MOCK_TAG ?? ""; // e.g. "stg-" to tell a second mock environment apart
 const SERVICES = ["checkout-api", "cart-svc", "user-svc", "search-api", "payments-gw"].map((s) => TAG + s);
@@ -45,6 +47,8 @@ function valuesFor(field: string, n: number): string[] {
   if (field.includes("path") || field.includes("endpoint")) return PATHS.slice(0, n);
   if (field.includes("level")) return ["error", "warn", "info"].slice(0, n);
   if (field.includes("status")) return ["500", "502", "503", "504"].slice(0, n);
+  if (field.includes("namespace")) return ["payments", "checkout", "search", "platform"].map((s) => TAG + s).slice(0, n);
+  if (field.includes("pod")) return ["checkout-api-7d9f8-x2k4p", "checkout-api-7d9f8-q8m1z", "cart-svc-5c6b9-r7t2w", "search-api-6f7d8-k3n5b"].slice(0, n);
   if (field.includes("_index")) return [".ds-logs-app-default-2026.10.19-000001", ".ds-logs-nginx-default-2026.10.19-000001"];
   return Array.from({ length: n }, (_, i) => `${field}-${i + 1}`);
 }
@@ -64,6 +68,7 @@ function splitTop(s: string): string[] {
 }
 
 function esql(query: string, endMs = Date.now()) {
+  query = query.replace(/`/g, ""); // quoted identifiers
   if (/nonexistent_field/.test(query)) {
     return { status: 400, body: { error: { type: "verification_exception", reason: "Found 1 problem\nline 1:20: Unknown column [nonexistent_field]" } } };
   }

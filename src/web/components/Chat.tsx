@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type KeyboardEvent } from "react";
+import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "./icons";
 
 export type ToolChip = { id: string; summary: string; result?: string; ok?: boolean };
@@ -51,6 +51,8 @@ export function Chat(props: {
   onSend: (text: string) => void;
   onStop: () => void;
   onNewChat: () => void;
+  /** The focus bar (namespace / pod / service filters), shown above the input. */
+  focus?: ReactNode;
 }) {
   const { messages, busy, hasDashboard, basedOn, llm, models, model, onModel, restored, retentionHours = 0, onSend, onStop, onNewChat } =
     props;
@@ -166,6 +168,7 @@ export function Chat(props: {
       </div>
 
       <div className="chat-foot">
+        {props.focus}
         {!busy && (
           <div className="chips">
             {suggestions.map((s) => (

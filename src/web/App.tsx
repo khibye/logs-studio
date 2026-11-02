@@ -5,6 +5,8 @@ import { Chat, type UiMessage } from "./components/Chat";
 import { Dashboard, type Origin } from "./components/Dashboard";
 import { Library } from "./components/Library";
 import { Admin } from "./components/Admin";
+import { ScopeBar } from "./components/ScopeBar";
+import type { Scope } from "../shared/scope";
 import { navigate, replaceUrl, savedHash, useRoute, withSession } from "./route";
 import { loadChat, newSessionKey, pruneChats, saveChat } from "./chatStore";
 import {
@@ -36,6 +38,22 @@ function readEnvPref(): string {
 function writeEnvPref(id: string) {
   try {
     localStorage.setItem(ENV_KEY, id);
+  } catch {}
+}
+
+/** The focus a new conversation starts with: the last one used in this browser. */
+const SCOPE_KEY = "logs-studio:scope";
+function readScopePref(): Scope {
+  try {
+    const v = JSON.parse(localStorage.getItem(SCOPE_KEY) ?? "[]");
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+function writeScopePref(s: Scope) {
+  try {
+    localStorage.setItem(SCOPE_KEY, JSON.stringify(s));
   } catch {}
 }
 
@@ -112,6 +130,16 @@ export function App() {
   const recipeRef = useRef<Recipe | null>(null);
   const loadingRef = useRef(false);
   recipeRef.current = recipe;
+  /** Focus filters: part of the dashboard when there is one, otherwise just for the conversation. */
+  const [scope, setScopeState] = useState<Scope>(readScopePref);
+  const scopeRef = useRef(scope);
+  scopeRef.current = scope;
+  const setScope = useCallback((s: Scope, opts: { fromRecipe?: boolean } = {}) => {
+    scopeRef.current = s;
+    setScopeState(s);
+    writeScopePref(s);
+    if (!opts.fromRecipe) setRecipe((cur) => (cur ? { ...cur, scope: s.length ? s : undefined } : cur));
+  }, []);
 
   const showToast = useCallback((t: Toast) => setToast(t), []);
   useEffect(() => {
@@ -193,13 +221,14 @@ export function App() {
       setRestored(false);
     }
     setRecipe(r);
+    if (r) setScope(r.scope ?? [], { fromRecipe: true }); // a new conversation keeps the current focus
     setSavedKey(r ? contentKey(r) : "");
     setOrigin(o);
     setLoadError(null);
     if (r) setRange(r.time_range);
     if (r?.env) setEnvId(r.env);
     draftKey.current = r?.id ?? newKey();
-  }, [restoreChat, setEnvId]);
+  }, [restoreChat, setEnvId, setScope]);
 
   // ---- Navigation → state ----
   useEffect(() => {
@@ -314,7 +343,13 @@ export function App() {
       });
     try {
       await streamChat(
-        { messages: history, recipe: recipeRef.current, time_range: range, model: activeModel || undefined },
+        {
+          messages: history,
+          recipe: recipeRef.current,
+          time_range: range,
+          model: activeModel || undefined,
+          scope: scopeRef.current.length ? scopeRef.current : undefined,
+        },
         (ev) => {
           switch (ev.type) {
             case "text": {
@@ -334,7 +369,7 @@ export function App() {
               }));
               break;
             case "recipe":
-              setRecipe({ ...ev.recipe, env: envRef.current });
+              setRecipe({ ...ev.recipe, env: envRef.current, scope: scopeRef.current.length ? scopeRef.current : undefined });
               setRange(ev.recipe.time_range);
               break;
             case "error":
@@ -498,6 +533,7 @@ export function App() {
             onStop={() => chatCtrl.current?.abort()}
             restored={restored}
             retentionHours={retention}
+            focus={<ScopeBar scope={scope} onChange={(s) => setScope(s)} range={range} envId={envId} disabled={busy} />}
             onNewChat={() => {
               chatCtrl.current?.abort();
               saveChat(sessionKey.current, [], retention); // forget it here too

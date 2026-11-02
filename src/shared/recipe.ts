@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { ScopeSchema } from "./scope";
 
 /**
  * A "recipe" is the whole definition of a dashboard: panels, each with its own
@@ -86,6 +87,8 @@ export const RecipeSchema = z.object({
   time_range: z.enum(TIME_RANGE_KEYS as [TimeRangeKey, ...TimeRangeKey[]]).default("24h"),
   /** Environment the dashboard opens on by default. The same dashboard can run on any environment. */
   env: z.string().max(40).optional(),
+  /** Focus filters added to every query (namespace, pod prefix…). See shared/scope.ts. */
+  scope: ScopeSchema.optional(),
   panels: z.array(PanelSchema).max(24),
 });
 export type Recipe = z.infer<typeof RecipeSchema>;
@@ -97,7 +100,7 @@ export function emptyRecipe(): Recipe {
 /** The part of a recipe that defines content (used to tell whether a draft changed). */
 export function contentKey(r: Recipe | null): string {
   if (!r) return "";
-  return JSON.stringify({ t: r.title, n: r.notes, tr: r.time_range, p: r.panels });
+  return JSON.stringify({ t: r.title, n: r.notes, tr: r.time_range, s: r.scope?.length ? r.scope : undefined, p: r.panels });
 }
 
 export type DashboardSummary = {

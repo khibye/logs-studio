@@ -9,6 +9,8 @@ import { HttpError, deployEvents, runEsql } from "./elastic";
 import { systemPrompt } from "./prompt";
 import { llmClient } from "./llm";
 import { log } from "./log";
+import { logFieldsSafe } from "./schema";
+import type { Scope } from "../shared/scope";
 import {
   PANEL_TYPES,
   PanelSchema,
@@ -129,7 +131,7 @@ function slug(s: string, i: number): string {
 }
 
 /** Validates a dashboard proposed by the model and test-runs each query. */
-async function validateDashboard(args: any, draft: Recipe | null, range: TimeRangeKey, signal: AbortSignal) {
+async function validateDashboard(args: any, draft: Recipe | null, range: TimeRangeKey, scope: Scope, signal: AbortSignal) {
   const errors: string[] = [];
   const rawPanels: any[] = Array.isArray(args?.panels) ? args.panels : [];
   const seen = new Set<string>();
@@ -150,7 +152,7 @@ async function validateDashboard(args: any, draft: Recipe | null, range: TimeRan
     panels.map(async (p) => {
       if (p.type === "text") return null;
       try {
-        const res = await runEsql(p.esql!, range, { signal, maxRows: 50 });
+        const res = await runEsql(p.esql!, range, { signal, maxRows: 50, scope });
         const types = new Map(res.columns.map((c) => [c.name, c.type]));
         const problems: string[] = [];
         for (const col of [p.x, ...(p.y ?? []), p.series].filter(Boolean) as string[]) {
@@ -175,6 +177,7 @@ async function validateDashboard(args: any, draft: Recipe | null, range: TimeRan
     title: String(args.title ?? draft?.title ?? "דשבורד"),
     notes: String(args.notes ?? draft?.notes ?? ""),
     time_range: TIME_RANGE_KEYS.includes(args.time_range) ? args.time_range : draft?.time_range ?? range,
+    scope: scope.length ? scope : undefined,
     panels,
   });
   return { recipe };
@@ -235,10 +238,12 @@ export async function runAgent(input: {
   recipe: Recipe | null;
   range: TimeRangeKey;
   model: string;
+  /** Focus filters set by the user; added to every query. */
+  scope: Scope;
   signal: AbortSignal;
   emit: (e: ChatEvent) => void;
 }) {
-  const { range, model, signal, emit } = input;
+  const { range, model, scope, signal, emit } = input;
   const client = llmClient();
   const started = Date.now();
   let toolCount = 0;
@@ -249,14 +254,21 @@ export async function runAgent(input: {
     range,
     messages: input.messages.length,
     dashboard: input.recipe ? `${input.recipe.title} (${input.recipe.panels.length} panels)` : undefined,
+    scope: scope.length ? scope.map((s) => `${s.field}${s.exclude ? "!=" : "="}${s.values.join("|")}`).join(" ") : undefined,
     question: log.isDebug() ? last?.content?.slice(0, 300) : undefined,
   });
 
   let draft = input.recipe;
+  // The field list goes into the prompt, so the model doesn't spend steps discovering it.
+  const fields = await logFieldsSafe();
   const convo: ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt(draft, range) },
+    { role: "system", content: systemPrompt(draft, range, { scope, fields }) },
     ...input.messages.map((m) => ({ role: m.role, content: m.content }) as ChatCompletionMessageParam),
   ];
+
+  /** Results of read-only calls in this turn: an identical call is answered from here, not re-run. */
+  const seen = new Map<string, unknown>();
+  let repeats = 0;
 
   async function execTool(call: ToolCall): Promise<unknown> {
     let args: any = {};
@@ -264,6 +276,17 @@ export async function runAgent(input: {
       args = call.arguments ? JSON.parse(call.arguments) : {};
     } catch {
       return { error: "Arguments were not valid JSON" };
+    }
+    const key = call.name === "set_dashboard" ? "" : `${call.name}:${JSON.stringify(args).replace(/\s+/g, " ")}`;
+    if (key && seen.has(key)) {
+      repeats++;
+      emit({ type: "tool_start", id: call.id, name: call.name, summary: toolSummary(call.name, args) });
+      emit({ type: "tool_end", id: call.id, ok: true, summary: "repeat — same result as before" });
+      log.info("chat.tool_repeat", { tool: call.name, repeats });
+      return {
+        note: "You already made this exact call in this turn. Here is the same result again. Don't repeat calls: use what you have, or move on to set_dashboard / your answer.",
+        result: seen.get(key),
+      };
     }
     emit({ type: "tool_start", id: call.id, name: call.name, summary: toolSummary(call.name, args) });
     const t0 = Date.now();
@@ -276,7 +299,7 @@ export async function runAgent(input: {
       switch (call.name) {
         case "list_indices": {
           const q = `FROM ${config.elastic.logPatterns.join(", ")} METADATA _index | STATS docs = COUNT(*) BY _index | SORT docs DESC | LIMIT 100`;
-          const res = await runEsql(q, range, { signal });
+          const res = await runEsql(q, range, { signal, scope });
           result = preview(res, 100);
           end = `${res.values.length} indices`;
           break;
@@ -296,6 +319,7 @@ export async function runAgent(input: {
             signal,
             maxRows: 200,
             window: windowArg(args),
+            scope,
           });
           result = preview(res);
           end = `${res.values.length} rows`;
@@ -308,7 +332,7 @@ export async function runAgent(input: {
           break;
         }
         case "set_dashboard": {
-          const v = await validateDashboard(args, draft, range, signal);
+          const v = await validateDashboard(args, draft, range, scope, signal);
           if (v.errors) {
             ok = false;
             result = { ok: false, errors: v.errors, hint: "Fix these and call set_dashboard again with all panels." };
@@ -328,6 +352,7 @@ export async function runAgent(input: {
       }
       emit({ type: "tool_end", id: call.id, ok, summary: end });
       if (!ok) toolErrors++;
+      if (key && ok) seen.set(key, result);
       (ok ? log.info : log.warn)("chat.tool", {
         tool: call.name,
         ok,
@@ -346,7 +371,7 @@ export async function runAgent(input: {
   }
 
   const finish = (outcome: string, steps: number) =>
-    log.info("chat.end", { outcome, steps, tools: toolCount, toolErrors, ms: Date.now() - started, model });
+    log.info("chat.end", { outcome, steps, tools: toolCount, toolErrors, repeats: repeats || undefined, ms: Date.now() - started, model });
   signal.addEventListener("abort", () => log.info("chat.cancelled", { ms: Date.now() - started, tools: toolCount }), {
     once: true,
   });

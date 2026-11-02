@@ -2,6 +2,7 @@ import { config, kibanaBase } from "./config";
 import { HttpError, runEsql } from "./elastic";
 import { log } from "./log";
 import type { Panel, Recipe } from "../shared/recipe";
+import { applyScope } from "../shared/scope";
 
 /**
  * EXPERIMENTAL — converts a recipe into a real Kibana dashboard through the
@@ -67,7 +68,9 @@ export async function exportToKibana(recipe: Recipe): Promise<{ url: string; id:
   let x = 0;
   let y = 0;
   let rowH = 0;
-  for (const p of recipe.panels) {
+  for (const raw of recipe.panels) {
+    // Kibana has no notion of the focus filters, so they become part of each query.
+    const p = raw.esql ? { ...raw, esql: applyScope(raw.esql, recipe.scope) } : raw;
     const cfg = await panelConfig(p);
     if (!cfg) {
       skipped.push(p.title);

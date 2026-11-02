@@ -1,5 +1,6 @@
 import { config } from "./config";
 import { log } from "./log";
+import { applyScope, type Scope } from "../shared/scope";
 import { TIME_RANGES, compareShiftMs, type Annotation, type Compare, type QueryResult, type TimeRangeKey } from "../shared/recipe";
 
 export class HttpError extends Error {
@@ -316,10 +317,12 @@ export async function runEsql(
     trusted?: boolean;
     /** Row cap instead of MAX_ROWS (CSV export uses EXPORT_MAX_ROWS). */
     cap?: number;
+    /** Focus filters (namespace, pod…) inserted as a WHERE right after FROM. */
+    scope?: Scope;
   } = {},
 ): Promise<QueryResult> {
   const cap = opts.cap ?? config.elastic.maxRows;
-  let guarded = guardEsql(query, { trusted: opts.trusted, cap });
+  let guarded = guardEsql(applyScope(query, opts.scope), { trusted: opts.trusted, cap });
   if (opts.maxRows && opts.maxRows < config.elastic.maxRows) guarded += `\n| LIMIT ${opts.maxRows}`;
 
   const { start, end } = queryWindow(range, opts);

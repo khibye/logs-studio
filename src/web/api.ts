@@ -10,6 +10,7 @@ import type {
   Recipe,
   TimeRangeKey,
 } from "../shared/recipe";
+import type { Scope } from "../shared/scope";
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>) {
@@ -71,11 +72,17 @@ export const api = {
   query: (
     esql: string,
     time_range: TimeRangeKey,
-    opts: { signal?: AbortSignal; compare?: Compare; env?: string; export?: boolean } = {},
+    opts: { signal?: AbortSignal; compare?: Compare; env?: string; export?: boolean; scope?: Scope } = {},
   ) =>
     call<QueryResult>("/api/query", {
       method: "POST",
-      body: JSON.stringify({ esql, time_range, compare: opts.compare, export: opts.export || undefined }),
+      body: JSON.stringify({
+        esql,
+        time_range,
+        compare: opts.compare,
+        export: opts.export || undefined,
+        scope: opts.scope?.length ? opts.scope : undefined,
+      }),
       signal: opts.signal,
       headers: opts.env ? { "x-env": opts.env } : undefined,
     }),
@@ -88,6 +95,16 @@ export const api = {
   /** Capabilities of a specific environment (admin page status per environment). */
   capabilitiesFor: (env: string, refresh = false) =>
     call<Capabilities>(`/api/capabilities${refresh ? "?refresh=1" : ""}`, { headers: { "x-env": env } }),
+
+  scopeFields: () =>
+    call<{ suggested: string[]; fields: { name: string; type: string }[] }>("/api/scope/fields"),
+
+  scopeValues: (field: string, q: string, time_range: TimeRangeKey, scope: Scope, signal?: AbortSignal) =>
+    call<{ values: { value: string; count: number }[]; reason?: string }>("/api/scope/values", {
+      method: "POST",
+      body: JSON.stringify({ field, q, time_range, scope }),
+      signal,
+    }),
 
   listDashboards: (q?: string) =>
     call<DashboardSummary[]>(`/api/dashboards${q ? `?q=${encodeURIComponent(q)}` : ""}`),
@@ -153,7 +170,7 @@ export const adminApi = {
 
 /** Streams the agent's events (newline-delimited JSON). */
 export async function streamChat(
-  body: { messages: ChatMessage[]; recipe: Recipe | null; time_range: TimeRangeKey; model?: string },
+  body: { messages: ChatMessage[]; recipe: Recipe | null; time_range: TimeRangeKey; model?: string; scope?: Scope },
   onEvent: (e: ChatEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

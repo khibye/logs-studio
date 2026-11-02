@@ -382,3 +382,35 @@ h4.sub { margin: 4px 0 -2px; font-size: 12.5px; color: var(--muted); font-weight
 .storage-line svg { flex: 0 0 auto; margin-top: 3px; }
 .savebar.dirty { background: #fffaf2; }
 .input.area.mono-in { min-height: 64px; }
+
+/* ---- Focus (scope) bar ---- */
+.scope-bar { display: flex; flex-direction: column; gap: 8px; }
+.scope-row { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.scope-label { font-size: 12px; font-weight: 600; color: var(--muted); }
+.scope-chip { display: inline-flex; align-items: stretch; max-width: 100%; border: 1px solid var(--accent); border-radius: 999px; background: var(--accent-soft); color: var(--accent-dark); font-size: 12px; overflow: hidden; }
+.scope-chip.not { border-color: #c2410c; background: #fff1e8; color: #9a3412; }
+.scope-chip-main { display: inline-flex; gap: 4px; align-items: center; min-height: 28px; padding: 0 4px 0 10px; border: 0; background: none; color: inherit; cursor: pointer; font: inherit; max-width: 260px; }
+.scope-chip-main > span { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.scope-field { opacity: .8; }
+.scope-values { font-weight: 600; }
+.scope-x { display: inline-flex; align-items: center; padding: 0 8px; border: 0; background: none; color: inherit; cursor: pointer; }
+.scope-x:hover, .scope-chip-main:hover { background: rgba(0,0,0,.05); }
+.scope-add { display: inline-flex; align-items: center; gap: 4px; min-height: 28px; padding: 0 10px; border: 1px dashed var(--border-strong); border-radius: 999px; background: none; color: var(--muted); font-size: 12px; cursor: pointer; }
+.scope-add:hover:not(:disabled) { color: var(--ink); border-color: var(--ink-2); }
+.scope-form { display: flex; flex-direction: column; gap: 8px; padding: 12px; border: 1px solid var(--border-strong); border-radius: 12px; background: var(--surface); box-shadow: 0 6px 24px rgba(0,0,0,.08); }
+.scope-form-row { display: flex; align-items: center; gap: 8px; }
+.scope-form-row .input { flex: 1; width: auto; min-height: 36px; }
+.scope-form-label { width: 32px; font-size: 12.5px; color: var(--muted); }
+.scope-hint { font-size: 11.5px; color: var(--muted); line-height: 1.5; }
+.scope-hint code { font-size: 11px; }
+.scope-sugg { display: flex; flex-wrap: wrap; gap: 4px; max-height: 92px; overflow: auto; }
+.scope-sugg .muted { font-size: 12px; }
+.chip.sm { min-height: 26px; padding: 2px 8px; font-size: 12px; }
+.chip.on { border-color: var(--accent); background: var(--accent-soft); color: var(--accent-dark); }
+.scope-form-foot { display: flex; align-items: center; gap: 6px; }
+.scope-form-foot .btn { min-height: 34px; }
+.scope-form-foot .check { font-size: 12.5px; display: inline-flex; gap: 6px; align-items: center; }
+.grow { flex: 1; }
+.board-scope { display: inline-flex; flex-wrap: wrap; gap: 4px; align-items: center; font-size: 12px; color: var(--muted); }
+.board-scope .scope-chip { cursor: default; }
+.board-scope .scope-chip-main { cursor: default; padding-right: 10px; }

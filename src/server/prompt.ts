@@ -1,7 +1,16 @@
 import { config } from "./config";
 import { TIME_RANGES, type Recipe, type TimeRangeKey } from "../shared/recipe";
+import { scopeWhere, type Scope } from "../shared/scope";
+import { fieldsForPrompt, type Field } from "./schema";
 
-export function systemPrompt(recipe: Recipe | null, range: TimeRangeKey): string {
+export function systemPrompt(
+  recipe: Recipe | null,
+  range: TimeRangeKey,
+  ctx: { scope?: Scope; fields?: Field[] | null } = {},
+): string {
+  const scope = ctx.scope ?? [];
+  const patterns = config.elastic.logPatterns.join(", ");
+  const fieldList = ctx.fields?.length ? fieldsForPrompt(ctx.fields) : null;
   const current = recipe
     ? JSON.stringify(
         { title: recipe.title, notes: recipe.notes, time_range: recipe.time_range, panels: recipe.panels },
@@ -23,13 +32,35 @@ ${config.environments.length > 1 ? `\nYou are connected to the environment "${co
 
 # Tools — use them, don't guess
 1. list_indices — which indices have data in the time range.
-2. get_fields — field names and types for an index pattern. Call it before writing queries; never invent field names.
+2. get_fields — field names and types for an index pattern.${
+    fieldList?.complete
+      ? " The fields of " + patterns + " are already listed below: do NOT call get_fields for them."
+      : fieldList
+        ? " Part of the fields are listed below; use get_fields with `contains` only to look for others."
+        : " Call it before writing queries; never invent field names."
+  }
 3. run_esql — run a query to explore and to check your answer before you claim anything.
 4. set_dashboard — create or replace the dashboard.${
     config.elastic.deployQuery ? "\n5. list_deploys — deploy / change events. Check it whenever you explain a change over time." : ""
   }
 
-# When the user points at a specific moment (messages that start with "נתח את הנקודה")
+# Be quick — every tool call makes the user wait (often several seconds each)
+- Plan first. Usually 1–4 run_esql queries are enough before set_dashboard.
+- Ask several things in ONE query: several aggregations in one STATS, several BY fields, TOP-N with LIMIT.
+- Never repeat a query you already ran; never re-check something you already know.
+- Use the field names you were given; don't explore the schema when the answer is already here.
+- If a query fails, read the error and fix that query — don't start over.
+
+${
+    scope.length
+      ? `# Focus set by the user — applied AUTOMATICALLY
+Every query you run and every dashboard panel is filtered with:
+  ${scopeWhere(scope)}
+(inserted right after FROM). Do NOT add these conditions yourself and do not search for which namespace / pod / service the user means: it is this focus. Mention it in "notes". Results only cover this focus.
+
+`
+      : ""
+  }# When the user points at a specific moment (messages that start with "נתח את הנקודה")
 They clicked a point on a chart. The message names the panel (and its id), the exact time window (ISO), the series and the value.
 - Use run_esql with from/to = that window to see what is in it: break it down by service, endpoint, status, log level and the most common messages.
 - Compare with the window of the same length just before it (from/to shifted back) to say what CHANGED, not just what is there.${
@@ -64,6 +95,13 @@ width: "full", "half" or "third". Typical layout: 2–4 metric panels as "third"
 - Only read data. You cannot change anything in Elasticsearch, and you must not try.
 
 ${
+  fieldList
+    ? `# Fields in ${patterns}${fieldList.complete ? "" : " (partial list)"} — name:type
+${fieldList.text}
+
+`
+    : ""
+}${
   config.elastic.logContext
     ? `# About this data (written by the people who own it — trust it over guesses)
 ${config.elastic.logContext}

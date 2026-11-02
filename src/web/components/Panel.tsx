@@ -4,6 +4,7 @@ import { Chart, numberFmt, type PointInfo, type PrevOverlay } from "./Chart";
 import { Icon } from "./icons";
 import { discoverUrl } from "../../shared/discover";
 import { downloadCsv, toCsv } from "../csv";
+import { applyScope, type Scope } from "../../shared/scope";
 import {
   TIME_RANGES,
   chartCompare,
@@ -22,8 +23,9 @@ function usePanelData(
   panel: Panel,
   range: TimeRangeKey,
   tick: number,
-  opts: { enabled: boolean; env?: string; compare?: Compare },
+  opts: { enabled: boolean; env?: string; compare?: Compare; scope?: Scope },
 ): State {
+  const scopeKey = JSON.stringify(opts.scope ?? []);
   const [state, setState] = useState<State>({ loading: opts.enabled && panel.type !== "text" });
   useEffect(() => {
     if (!opts.enabled || panel.type === "text" || !panel.esql) {
@@ -33,14 +35,14 @@ function usePanelData(
     const ctrl = new AbortController();
     setState((s) => ({ ...s, loading: true }));
     api
-      .query(panel.esql, range, { signal: ctrl.signal, env: opts.env, compare: opts.compare })
+      .query(panel.esql, range, { signal: ctrl.signal, env: opts.env, compare: opts.compare, scope: opts.scope })
       .then((data) => setState({ data, loading: false }))
       .catch((err) => {
         if (ctrl.signal.aborted) return;
         setState({ error: err.message, loading: false });
       });
     return () => ctrl.abort();
-  }, [panel.esql, panel.type, range, tick, opts.enabled, opts.env, opts.compare]);
+  }, [panel.esql, panel.type, range, tick, opts.enabled, opts.env, opts.compare, scopeKey]); // eslint-disable-line react-hooks/exhaustive-deps
   return state;
 }
 
@@ -148,6 +150,8 @@ export function PanelView(props: {
   panel: Panel;
   range: TimeRangeKey;
   tick: number;
+  /** The dashboard's focus filters, added to the query. */
+  scope?: Scope;
   discoverBase?: string;
   envId?: string;
   envName?: string;
@@ -160,7 +164,7 @@ export function PanelView(props: {
   onAsk: (text: string) => void;
   onRemove: () => void;
 }) {
-  const { panel, range, tick, discoverBase, envId, envName, compareEnv, comparePrev, annotations, multiEnv, onAsk, onRemove } =
+  const { panel, range, tick, scope, discoverBase, envId, envName, compareEnv, comparePrev, annotations, multiEnv, onAsk, onRemove } =
     props;
   const [showQuery, setShowQuery] = useState(false);
   const [showData, setShowData] = useState(false);
@@ -173,9 +177,11 @@ export function PanelView(props: {
   const prevKind: Compare | undefined =
     !comparePrev || compareEnv ? undefined : panel.type === "metric" ? "previous" : panel.type === "line" || panel.type === "area" ? chartCompare(range) : undefined;
 
-  const main = usePanelData(panel, range, tick, { enabled: true });
-  const prev = usePanelData(panel, range, tick, { enabled: Boolean(prevKind), compare: prevKind });
-  const other = usePanelData(panel, range, tick, { enabled: Boolean(compareEnv), env: compareEnv?.id });
+  const main = usePanelData(panel, range, tick, { enabled: true, scope });
+  const prev = usePanelData(panel, range, tick, { enabled: Boolean(prevKind), compare: prevKind, scope });
+  const other = usePanelData(panel, range, tick, { enabled: Boolean(compareEnv), env: compareEnv?.id, scope });
+  /** The query as it actually runs (with the focus filters) — for Discover. */
+  const runEsql = panel.esql ? applyScope(panel.esql, scope) : undefined;
 
   const sides: Side[] = [{ env: envId, envName, state: main, prev: prevKind ? prev : undefined }];
   if (compareEnv) sides.push({ env: compareEnv.id, envName: compareEnv.name, state: other });
@@ -214,7 +220,7 @@ export function PanelView(props: {
           .filter((s) => s.state.data)
           .map(async (s) => ({
             label: s.envName,
-            data: s.state.data!.truncated ? await api.query(panel.esql!, range, { env: s.env, export: true }) : s.state.data!,
+            data: s.state.data!.truncated ? await api.query(panel.esql!, range, { env: s.env, export: true, scope }) : s.state.data!,
           })),
       );
       if (!parts.length) throw new Error("אין עדיין נתונים להורדה");
@@ -294,7 +300,7 @@ export function PanelView(props: {
             {i === 0 && discoverBase && panel.esql && point.p.isTime && point.p.from && point.p.to && (
               <a
                 className="menu-item"
-                href={discoverUrl(discoverBase, panel.esql, range, { from: point.p.from, to: point.p.to })}
+                href={discoverUrl(discoverBase, runEsql!, range, { from: point.p.from, to: point.p.to })}
                 target="_blank"
                 rel="noreferrer"
                 onClick={() => setPoint(null)}
@@ -330,7 +336,7 @@ export function PanelView(props: {
           {panel.esql && discoverBase && (
             <a
               className="icon-btn"
-              href={discoverUrl(discoverBase, panel.esql, range)}
+              href={discoverUrl(discoverBase, runEsql!, range)}
               target="_blank"
               rel="noreferrer"
               title="פתח ב-Discover"

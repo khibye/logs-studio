@@ -71,6 +71,8 @@ function buildEnv(id: string, name: string, v: (key: string) => string | undefin
       logContext: cleanContext(v("LOG_CONTEXT")),
       /** ES|QL returning deploy / change events (time + description columns). Empty = none. */
       deployQuery: (v("DEPLOY_QUERY") ?? "").trim(),
+      /** Fields offered in the focus bar. Empty = auto-detect common Kubernetes / service fields. */
+      scopeFields: list(v("SCOPE_FIELDS")),
       // The rest are global (same in every environment).
       dashboardsIndex: rawValue("DASHBOARDS_INDEX") || "ai-dashboards",
       /** Hard cap on rows any query may return. */

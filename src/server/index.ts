@@ -12,6 +12,8 @@ import { runAgent } from "./agent";
 import { listModels, resolveModel } from "./llm";
 import { adminRouter } from "./admin";
 import { log, logLevel, requestId, safeHost, setLogEnv, withRequest } from "./log";
+import { ScopeSchema } from "../shared/scope";
+import { scopeFields, topValues } from "./schema";
 import { RecipeSchema, TIME_RANGE_KEYS, type ChatEvent, type TimeRangeKey } from "../shared/recipe";
 
 /**
@@ -114,14 +116,40 @@ app.post(
         compare: z.enum(["previous", "week"]).optional(),
         /** For "download CSV": up to EXPORT_MAX_ROWS rows instead of MAX_ROWS. */
         export: z.boolean().optional(),
+        /** The dashboard's focus filters. */
+        scope: ScopeSchema.optional(),
       })
       .parse(req.body);
     const ctrl = new AbortController();
     res.on("close", () => !res.writableEnded && ctrl.abort());
     const cap = body.export ? Math.max(config.elastic.exportMaxRows, config.elastic.maxRows) : undefined;
-    const result = await runEsql(body.esql, body.time_range, { signal: ctrl.signal, compare: body.compare, cap });
+    const result = await runEsql(body.esql, body.time_range, {
+      signal: ctrl.signal,
+      compare: body.compare,
+      cap,
+      scope: body.scope,
+    });
     if (body.export) log.info("export.csv", { rows: result.values.length, truncated: result.truncated || undefined });
     res.json(result);
+  }),
+);
+
+/** Focus bar: fields to offer, and the most common values of one field. */
+app.get(
+  "/api/scope/fields",
+  route(async (_req, res) => {
+    res.json(await scopeFields());
+  }),
+);
+app.post(
+  "/api/scope/values",
+  route(async (req, res) => {
+    const body = z
+      .object({ field: z.string().min(1).max(200), q: z.string().max(200).optional(), time_range: RangeSchema, scope: ScopeSchema.optional() })
+      .parse(req.body);
+    const ctrl = new AbortController();
+    res.on("close", () => !res.writableEnded && ctrl.abort());
+    res.json(await topValues(body.field, { q: body.q, range: body.time_range, scope: body.scope, signal: ctrl.signal }));
   }),
 );
 
@@ -154,6 +182,8 @@ app.post(
         recipe: z.unknown().optional(),
         time_range: RangeSchema,
         model: z.string().max(200).optional(),
+        /** Focus filters set by the user (namespace, pod…), applied to every query. */
+        scope: ScopeSchema.optional(),
       })
       .parse(req.body);
     const parsed = body.recipe ? RecipeSchema.safeParse(body.recipe) : null;
@@ -179,6 +209,7 @@ app.post(
         recipe: parsed?.success ? parsed.data : null,
         range: body.time_range,
         model,
+        scope: body.scope ?? [],
         signal: ctrl.signal,
         emit,
       });
