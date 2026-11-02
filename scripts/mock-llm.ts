@@ -82,13 +82,31 @@ app.get("/v1/models", (_req, res) => {
   });
 });
 
+/** "צור תבנית…": a wrong field first (rejected by the app), then the right one. */
+function templateStep(messages: any[]) {
+  const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
+  const tools = messages.slice(lastUserIdx + 1).filter((m) => m.role === "tool");
+  const base = {
+    name: "WebUI",
+    description: "לוגים של ה-webui",
+    indices: ["logs-*"],
+    context: "webui הוא ממשק המשתמש. שגיאות: log.level == \"error\". שם ה-pod בשדה kubernetes.pod.name.",
+    questions: ["מה השגיאות הנפוצות היום?", "האם היו הפעלות מחדש?"],
+  };
+  if (tools.length === 0) return { tool: { name: "propose_template", args: { ...base, scope: [{ field: "pod_name", values: ["*webui*"] }] } } };
+  if (tools.length === 1) return { tool: { name: "propose_template", args: { ...base, scope: [{ field: "kubernetes.pod.name", values: ["*webui*"] }] } } };
+  return { text: "הצעתי תבנית WebUI: האינדקסים, שדה ה-pod הנכון והסבר קצר. אפשר לשמור אותה." };
+}
+
 let callNo = 0;
 app.post("/v1/chat/completions", async (req, res) => {
   const msgs = req.body.messages ?? [];
   const lastUser = String(msgs[msgs.map((m: any) => m.role).lastIndexOf("user")]?.content ?? "");
   const step: { text?: string; tool?: { name: string; args: any } } = lastUser.startsWith("נתח את הנקודה")
     ? focusStep(msgs, req.body.tools ?? [])
-    : nextStep(msgs);
+    : lastUser.includes("תבנית")
+      ? templateStep(msgs)
+      : nextStep(msgs);
   if (!step.tool && step.text) step.text += ` (ענה: ${req.body.model})`;
   const id = `chatcmpl-${++callNo}`;
   const toolCall = step.tool

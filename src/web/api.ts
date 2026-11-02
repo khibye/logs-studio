@@ -11,6 +11,15 @@ import type {
   TimeRangeKey,
 } from "../shared/recipe";
 import type { Scope } from "../shared/scope";
+import type { Template } from "../shared/template";
+import type { Context } from "../shared/context";
+
+export type TemplatesInfo = {
+  templates: Template[];
+  saveTo: "library" | "server" | null;
+  stores: { library: { read: boolean; write: boolean; reason?: string }; server: { write: boolean; reason?: string } };
+  errors: string[];
+};
 
 export class ApiError extends Error {
   constructor(public status: number, message: string, public fields?: Record<string, string>) {
@@ -96,15 +105,30 @@ export const api = {
   capabilitiesFor: (env: string, refresh = false) =>
     call<Capabilities>(`/api/capabilities${refresh ? "?refresh=1" : ""}`, { headers: { "x-env": env } }),
 
-  scopeFields: () =>
-    call<{ suggested: string[]; fields: { name: string; type: string }[] }>("/api/scope/fields"),
+  scopeFields: (indices?: string[]) =>
+    call<{ suggested: string[]; fields: { name: string; type: string }[] }>(
+      `/api/scope/fields${indices?.length ? `?indices=${encodeURIComponent(indices.join(","))}` : ""}`,
+    ),
 
-  scopeValues: (field: string, q: string, time_range: TimeRangeKey, scope: Scope, signal?: AbortSignal) =>
+  scopeValues: (field: string, q: string, time_range: TimeRangeKey, scope: Scope, indices?: string[], signal?: AbortSignal) =>
     call<{ values: { value: string; count: number }[]; reason?: string }>("/api/scope/values", {
       method: "POST",
-      body: JSON.stringify({ field, q, time_range, scope }),
+      body: JSON.stringify({ field, q, time_range, scope, indices: indices?.length ? indices : undefined }),
       signal,
     }),
+
+  scopeCount: (time_range: TimeRangeKey, scope: Scope, indices?: string[], signal?: AbortSignal) =>
+    call<{ count: number; missing: string[] }>("/api/scope/count", {
+      method: "POST",
+      body: JSON.stringify({ time_range, scope, indices: indices?.length ? indices : undefined }),
+      signal,
+    }),
+
+  templates: () => call<TemplatesInfo>("/api/templates"),
+  saveTemplate: (template: Template) =>
+    call<Template>("/api/templates", { method: "POST", body: JSON.stringify({ template }) }),
+  deleteTemplate: (t: Template) =>
+    call<{ ok: true }>(`/api/templates/${t.store}/${encodeURIComponent(t.id ?? "")}`, { method: "DELETE" }),
 
   listDashboards: (q?: string) =>
     call<DashboardSummary[]>(`/api/dashboards${q ? `?q=${encodeURIComponent(q)}` : ""}`),
@@ -170,7 +194,14 @@ export const adminApi = {
 
 /** Streams the agent's events (newline-delimited JSON). */
 export async function streamChat(
-  body: { messages: ChatMessage[]; recipe: Recipe | null; time_range: TimeRangeKey; model?: string; scope?: Scope },
+  body: {
+    messages: ChatMessage[];
+    recipe: Recipe | null;
+    time_range: TimeRangeKey;
+    model?: string;
+    scope?: Scope;
+    context?: Context;
+  },
   onEvent: (e: ChatEvent) => void,
   signal: AbortSignal,
 ): Promise<void> {

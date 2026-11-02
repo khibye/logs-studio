@@ -415,3 +415,45 @@ h4.sub { margin: 4px 0 -2px; font-size: 12.5px; color: var(--muted); font-weight
 .board-scope .scope-chip { cursor: default; }
 .board-scope .scope-chip-main { cursor: default; padding-right: 10px; }
 .caps-build { margin-top: 8px; font-size: 11.5px; color: var(--muted); }
+.scope-count { font-size: 12px; color: var(--muted); }
+.scope-count.bad { color: #9a3412; background: #fff1e8; border-radius: 8px; padding: 6px 8px; }
+
+/* ---- Templates ---- */
+.modal-back { position: fixed; inset: 0; z-index: 50; display: flex; align-items: flex-start; justify-content: center; padding: 48px 16px; background: rgba(15, 17, 20, .35); overflow: auto; }
+.modal { width: min(640px, 100%); display: flex; flex-direction: column; gap: 14px; padding: 20px 22px; border-radius: 16px; background: var(--surface); box-shadow: 0 20px 60px rgba(0,0,0,.25); }
+.modal-head { display: flex; align-items: center; justify-content: space-between; }
+.modal-head h2 { margin: 0; font-size: 18px; }
+.modal .banner { margin: 0; }
+.modal-foot { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; padding-top: 4px; border-top: 1px solid var(--border); padding-top: 14px; }
+.field-label { font-weight: 600; font-size: 13px; }
+.field-help { font-size: 12px; color: var(--muted); line-height: 1.5; }
+.field.inline { flex-direction: row; align-items: center; gap: 10px; }
+.field.inline .input { width: 220px; }
+.input.area.short { min-height: 70px; }
+.modal .scope-bar { padding: 10px; border: 1px solid var(--border); border-radius: 10px; }
+.tpl-chips { display: flex; flex-wrap: wrap; gap: 4px; justify-content: flex-end; }
+.tpl-chip { padding: 1px 8px; border-radius: 999px; background: var(--accent-soft); color: var(--accent-dark); font-size: 11.5px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+.tpl-chip.idx { background: var(--surface-2); color: var(--ink-2); }
+.tpl-chip.not { background: #fff1e8; color: #9a3412; }
+.tpl-picker { display: flex; flex-direction: column; gap: 8px; margin-top: 14px; text-align: start; }
+.tpl-picker-head { display: flex; justify-content: space-between; align-items: baseline; font-weight: 600; font-size: 13px; }
+.tpl-list { display: flex; flex-direction: column; gap: 6px; }
+.tpl-item { display: flex; flex-direction: column; gap: 4px; align-items: stretch; padding: 10px 12px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); text-align: start; cursor: pointer; font: inherit; color: var(--ink); }
+.tpl-item:hover { border-color: var(--accent); }
+.tpl-name { font-weight: 600; font-size: 13.5px; }
+.tpl-desc { font-size: 12px; color: var(--muted); }
+.tpl-proposal { display: flex; flex-direction: column; gap: 8px; margin-top: 8px; padding: 12px; border: 1px solid var(--accent); border-radius: 12px; background: #f6fbfa; }
+.tpl-proposal-head { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px; }
+.tpl-badge { font-size: 11px; font-weight: 600; color: var(--accent-dark); background: var(--accent-soft); padding: 1px 8px; border-radius: 999px; }
+.tpl-context { font-size: 12px; color: var(--ink-2); white-space: pre-wrap; max-height: 110px; overflow: auto; }
+.tpl-proposal-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.context-line { display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+.context-line:empty { display: none; }
+.context-chip { display: inline-flex; align-items: center; gap: 6px; padding-inline-start: 10px; min-height: 28px; border: 1px solid var(--ink-2); border-radius: 999px; font-size: 12px; }
+.context-name { font-weight: 600; }
+.section-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; }
+.tpl-rows { list-style: none; margin: 0 0 28px; padding: 0; display: flex; flex-direction: column; gap: 8px; }
+.tpl-row { display: flex; justify-content: space-between; gap: 12px; align-items: center; padding: 12px 14px; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); }
+.tpl-row-main { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.tpl-row-main .tpl-chips { justify-content: flex-start; }
+.tpl-row-actions { display: flex; gap: 6px; flex: 0 0 auto; }

@@ -13,7 +13,9 @@ import { listModels, resolveModel } from "./llm";
 import { adminRouter } from "./admin";
 import { log, logLevel, requestId, safeHost, setLogEnv, withRequest } from "./log";
 import { ScopeSchema } from "../shared/scope";
-import { scopeFields, topValues } from "./schema";
+import { ContextSchema } from "../shared/context";
+import { matchCount, scopeFields, topValues } from "./schema";
+import { deleteTemplate, listTemplates, saveTemplate } from "./templates";
 import { BUILD } from "./build";
 import { RecipeSchema, TIME_RANGE_KEYS, type ChatEvent, type TimeRangeKey } from "../shared/recipe";
 
@@ -136,21 +138,64 @@ app.post(
 );
 
 /** Focus bar: fields to offer, and the most common values of one field. */
+const IndicesParam = z.array(z.string().max(200)).max(10).optional();
+
 app.get(
   "/api/scope/fields",
-  route(async (_req, res) => {
-    res.json(await scopeFields());
+  route(async (req, res) => {
+    const indices = typeof req.query.indices === "string" && req.query.indices ? req.query.indices.split(",") : undefined;
+    res.json(await scopeFields(indices));
+  }),
+);
+/** How many log lines the focus matches — instant feedback for a wrong field / value. */
+app.post(
+  "/api/scope/count",
+  route(async (req, res) => {
+    const body = z.object({ time_range: RangeSchema, scope: ScopeSchema.optional(), indices: IndicesParam }).parse(req.body);
+    const ctrl = new AbortController();
+    res.on("close", () => !res.writableEnded && ctrl.abort());
+    res.json(await matchCount({ range: body.time_range, scope: body.scope, indices: body.indices, signal: ctrl.signal }));
   }),
 );
 app.post(
   "/api/scope/values",
   route(async (req, res) => {
     const body = z
-      .object({ field: z.string().min(1).max(200), q: z.string().max(200).optional(), time_range: RangeSchema, scope: ScopeSchema.optional() })
+      .object({
+        field: z.string().min(1).max(200),
+        q: z.string().max(200).optional(),
+        time_range: RangeSchema,
+        scope: ScopeSchema.optional(),
+        indices: IndicesParam,
+      })
       .parse(req.body);
     const ctrl = new AbortController();
     res.on("close", () => !res.writableEnded && ctrl.abort());
-    res.json(await topValues(body.field, { q: body.q, range: body.time_range, scope: body.scope, signal: ctrl.signal }));
+    res.json(
+      await topValues(body.field, { q: body.q, range: body.time_range, scope: body.scope, indices: body.indices, signal: ctrl.signal }),
+    );
+  }),
+);
+
+// ---- Templates: starting points for an investigation (indices, focus, explanation) ----
+app.get(
+  "/api/templates",
+  route(async (_req, res) => {
+    res.json(await listTemplates());
+  }),
+);
+app.post(
+  "/api/templates",
+  route(async (req, res) => {
+    res.json(await saveTemplate(z.object({ template: z.unknown() }).parse(req.body).template));
+  }),
+);
+app.delete(
+  "/api/templates/:store/:id",
+  route(async (req, res) => {
+    const store = z.enum(["library", "server"]).parse(req.params.store);
+    await deleteTemplate(store, String(req.params.id).slice(0, 80));
+    res.json({ ok: true });
   }),
 );
 
@@ -185,6 +230,8 @@ app.post(
         model: z.string().max(200).optional(),
         /** Focus filters set by the user (namespace, pod…), applied to every query. */
         scope: ScopeSchema.optional(),
+        /** Investigation context (from a template): indices and an explanation for the model. */
+        context: ContextSchema.optional(),
       })
       .parse(req.body);
     const parsed = body.recipe ? RecipeSchema.safeParse(body.recipe) : null;
@@ -211,6 +258,7 @@ app.post(
         range: body.time_range,
         model,
         scope: body.scope ?? [],
+        context: body.context,
         signal: ctrl.signal,
         emit,
       });

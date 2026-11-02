@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "./icons";
+import { TemplateProposal } from "./Templates";
+import type { Template } from "../../shared/template";
 
 export type ToolChip = { id: string; summary: string; result?: string; ok?: boolean };
 export type UiMessage = {
@@ -10,6 +12,8 @@ export type UiMessage = {
   error?: string;
   /** Which model answered (shown when the conversation used more than one). */
   model?: string;
+  /** Templates the model proposed in this answer. */
+  proposals?: { template: Template; count: number }[];
 };
 
 /** Renders `inline code` without interpreting any HTML. */
@@ -53,6 +57,12 @@ export function Chat(props: {
   onNewChat: () => void;
   /** The focus bar (namespace / pod / service filters), shown above the input. */
   focus?: ReactNode;
+  /** Shown in an empty chat: start from a template. */
+  starter?: ReactNode;
+  /** Suggested questions (a template's), instead of the generic ones. */
+  suggestions?: string[];
+  onSaveProposal?: (t: Template) => void;
+  onUseProposal?: (t: Template) => void;
 }) {
   const { messages, busy, hasDashboard, basedOn, llm, models, model, onModel, restored, retentionHours = 0, onSend, onStop, onNewChat } =
     props;
@@ -80,7 +90,7 @@ export function Chat(props: {
     }
   };
 
-  const suggestions = hasDashboard ? SUGGESTIONS_EXISTING : SUGGESTIONS_NEW;
+  const suggestions = props.suggestions?.length ? props.suggestions : hasDashboard ? SUGGESTIONS_EXISTING : SUGGESTIONS_NEW;
 
   return (
     <aside className="chat" aria-label="שיחה עם המודל">
@@ -124,6 +134,7 @@ export function Chat(props: {
             ) : (
               <p>בקשי ניתוח של הלוגים, והמודל יבנה דשבורד חי מהממצאים.</p>
             )}
+            {!basedOn && props.starter}
           </div>
         )}
         {restored && messages.length > 0 && (
@@ -151,6 +162,15 @@ export function Chat(props: {
                   <RichText text={m.content} />
                 </div>
               )}
+              {m.proposals?.map((p, j) => (
+                <TemplateProposal
+                  key={j}
+                  template={p.template}
+                  count={p.count}
+                  onSave={() => props.onSaveProposal?.(p.template)}
+                  onUse={() => props.onUseProposal?.(p.template)}
+                />
+              ))}
               {m.streaming && !m.content && <div className="typing" aria-label="המודל עובד" />}
               {m.error && (
                 <div className="msg-error" role="alert">

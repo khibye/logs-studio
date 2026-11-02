@@ -82,7 +82,10 @@ export async function listDashboards(q?: string): Promise<DashboardSummary[]> {
   const query = q?.trim()
     ? { multi_match: { query: q.trim(), fields: ["title^3", "notes"], fuzziness: "AUTO" } }
     : { match_all: {} };
-  const docs = await searchDocs(query, 1000, "saved_at");
+  // Templates share the index (ids "tpl:…"); they're not dashboards.
+  const docs = (
+    await searchDocs({ bool: { must: [query], must_not: [{ prefix: { dashboard_id: "tpl:" } }] } }, 1000, "saved_at")
+  ).filter((d) => !d.dashboard_id?.startsWith("tpl:"));
   const byId = new Map<string, { latest: Doc; count: number }>();
   for (const d of docs) {
     const e = byId.get(d.dashboard_id);

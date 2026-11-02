@@ -240,8 +240,14 @@ const idxGuard = (req: express.Request, res: express.Response) => {
 
 app.post("/:index/_search", (req, res) => {
   if (!idxGuard(req, res)) return;
-  const q = req.body.query ?? {};
+  let q = req.body.query ?? {};
   let hits = [...docs.values()];
+  if (q.bool) {
+    for (const n of q.bool.must_not ?? []) if (n.prefix?.dashboard_id) hits = hits.filter((d) => !String(d.dashboard_id).startsWith(n.prefix.dashboard_id));
+    q = q.bool.must?.[0] ?? {};
+  }
+  if (q.prefix?.dashboard_id) hits = hits.filter((d) => String(d.dashboard_id).startsWith(q.prefix.dashboard_id));
+  if (q.term?.dashboard_id) hits = hits.filter((d) => d.dashboard_id === q.term.dashboard_id);
   if (q.match_phrase?.dashboard_id) hits = hits.filter((d) => d.dashboard_id === q.match_phrase.dashboard_id);
   if (q.multi_match?.query) {
     const s = String(q.multi_match.query).toLowerCase();

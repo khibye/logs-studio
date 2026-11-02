@@ -2,14 +2,16 @@ import { config } from "./config";
 import { TIME_RANGES, type Recipe, type TimeRangeKey } from "../shared/recipe";
 import { scopeWhere, type Scope } from "../shared/scope";
 import { fieldsForPrompt, type Field } from "./schema";
+import type { Context } from "../shared/context";
 
 export function systemPrompt(
   recipe: Recipe | null,
   range: TimeRangeKey,
-  ctx: { scope?: Scope; fields?: Field[] | null } = {},
+  ctx: { scope?: Scope; fields?: Field[] | null; context?: Context; indices?: string[] } = {},
 ): string {
   const scope = ctx.scope ?? [];
-  const patterns = config.elastic.logPatterns.join(", ");
+  const chosen = ctx.indices ?? [];
+  const patterns = (chosen.length ? chosen : config.elastic.logPatterns).join(", ");
   const fieldList = ctx.fields?.length ? fieldsForPrompt(ctx.fields) : null;
   const current = recipe
     ? JSON.stringify(
@@ -52,6 +54,14 @@ ${config.environments.length > 1 ? `\nYou are connected to the environment "${co
 - If a query fails, read the error and fix that query — don't start over.
 
 ${
+    ctx.context?.template || chosen.length || ctx.context?.text
+      ? `# Starting point for this conversation${ctx.context?.template ? ` (template "${ctx.context.template.name}")` : ""}
+${chosen.length ? `- The data is in: ${patterns}. Query FROM ${patterns} (not the wider patterns) unless the user asks about something else.\n` : ""}${
+          ctx.context?.text ? `- What the user wrote about this data — trust it over guesses:\n${ctx.context.text}\n` : ""
+        }
+`
+      : ""
+  }${
     scope.length
       ? `# Focus set by the user — applied AUTOMATICALLY
 Every query you run and every dashboard panel is filtered with:
@@ -68,11 +78,19 @@ They clicked a point on a chart. The message names the panel (and its id), the e
   }
 - Answer in a few sentences: what happened, where, since when, the likely cause. Don't change the dashboard unless asked; you may offer a panel that would track it.
 
+# Templates (when the user asks to create a template / a starting point / "something to track X")
+A template is a reusable starting point, not a dashboard: the indices that hold the data, focus filters, and an explanation for future conversations.
+- Find the narrowest index pattern that holds the data (list_indices), the right field (e.g. the real pod-name field) and the values (STATS COUNT(*) BY field, or WHERE field LIKE "*x*"). Field names differ between clusters — check, don't assume.
+- Then call propose_template. It is rejected if it matches 0 lines; fix and retry. The user saves it; you don't.
+- In "context" write what you learned that a future conversation needs: important fields and their meaning, how errors look, service names. No live numbers.
+
 # ES|QL rules (Elasticsearch ${"9.x"})
 - Allowed index patterns: ${config.elastic.logPatterns.join(", ")}. Queries must start with FROM.${
-    config.elastic.logPatterns.length === 1
-      ? ` Always query FROM ${config.elastic.logPatterns[0]} — there is no need to call list_indices.`
-      : ""
+    chosen.length
+      ? ` For this conversation use FROM ${patterns} — there is no need to call list_indices.`
+      : config.elastic.logPatterns.length === 1
+        ? ` Always query FROM ${config.elastic.logPatterns[0]} — there is no need to call list_indices.`
+        : ""
   }
 - Time series: STATS c = COUNT(*) BY bucket = BUCKET(${config.elastic.timeField}, 50, ?_tstart, ?_tend) — always with ?_tstart and ?_tend (the app fills them from the time range) and an alias; then SORT bucket. Set x = "bucket".
 - Breakdowns: add the split field to BY, e.g. BY bucket = BUCKET(...), service.name, and set series = "service.name". Keep breakdowns to ≤ 8 values (filter with WHERE or keep the top values).

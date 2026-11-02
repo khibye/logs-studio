@@ -153,12 +153,23 @@ export async function es<T = any>(
 // and stop a single query from pulling huge result sets.
 // ---------------------------------------------------------------------------
 
+/** Checks index patterns chosen for a template / conversation against LOG_INDEX_PATTERNS. */
+export function checkIndices(indices: string[] | undefined): string[] {
+  const list = (indices ?? []).map((s) => s.trim()).filter(Boolean);
+  for (const s of list) {
+    if (!/^[\w.*\-:,]+$/.test(s)) throw new HttpError(400, `Invalid index pattern: ${s}`);
+    if (!sourceAllowed(s))
+      throw new HttpError(400, `Index pattern not allowed: ${s}. Allowed: ${config.elastic.logPatterns.join(", ")}`);
+  }
+  return list;
+}
+
 function globToRegex(glob: string): RegExp {
   const esc = glob.replace(/[.+?^${}()|[\]\\]/g, "\\$&").replace(/\*/g, ".*");
   return new RegExp(`^${esc}$`, "i");
 }
 
-function sourceAllowed(source: string): boolean {
+export function sourceAllowed(source: string): boolean {
   let s = source.trim().replace(/^"(.*)"$/, "$1").replace(/^`(.*)`$/, "$1");
   if (s.startsWith("-")) return true; // exclusions only narrow the selection
   if (!s || s.startsWith(".")) return false;

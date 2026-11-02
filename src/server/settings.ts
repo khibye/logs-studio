@@ -159,6 +159,15 @@ export const SETTINGS: SettingDef[] = [
     help: "info: כל בקשה, כל שיחה וכל צעד של המודל. debug: גם כל שאילתה ל-Elasticsearch וכל קריאה למודל, עם זמנים. מפתחות וסיסמאות לא נכתבים ללוג.",
   },
   {
+    key: "TEMPLATES_STORE",
+    group: "app",
+    kind: "enum",
+    options: ["auto", "library", "server"],
+    default: "auto",
+    label: "איפה נשמרות תבניות",
+    help: "library: בספרייה המשותפת באלסטיק (צריך הרשאת כתיבה). server: בקובץ templates.json בתיקיית הנתונים של האפליקציה (עובד גם עם מפתח לקריאה בלבד). auto: הספרייה אם אפשר לכתוב אליה, אחרת השרת.",
+  },
+  {
     key: "LOG_FORMAT",
     group: "app",
     kind: "enum",

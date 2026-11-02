@@ -1,5 +1,7 @@
 import { z } from "zod";
 import { ScopeSchema } from "./scope";
+import { ContextSchema } from "./context";
+import type { Template } from "./template";
 
 /**
  * A "recipe" is the whole definition of a dashboard: panels, each with its own
@@ -89,6 +91,8 @@ export const RecipeSchema = z.object({
   env: z.string().max(40).optional(),
   /** Focus filters added to every query (namespace, pod prefix…). See shared/scope.ts. */
   scope: ScopeSchema.optional(),
+  /** Investigation context (indices, explanation for the model, the template it came from). */
+  context: ContextSchema.optional(),
   panels: z.array(PanelSchema).max(24),
 });
 export type Recipe = z.infer<typeof RecipeSchema>;
@@ -100,7 +104,7 @@ export function emptyRecipe(): Recipe {
 /** The part of a recipe that defines content (used to tell whether a draft changed). */
 export function contentKey(r: Recipe | null): string {
   if (!r) return "";
-  return JSON.stringify({ t: r.title, n: r.notes, tr: r.time_range, s: r.scope?.length ? r.scope : undefined, p: r.panels });
+  return JSON.stringify({ t: r.title, n: r.notes, tr: r.time_range, s: r.scope?.length ? r.scope : undefined, c: r.context, p: r.panels });
 }
 
 export type DashboardSummary = {
@@ -145,6 +149,8 @@ export type ChatEvent =
   | { type: "tool_start"; id: string; name: string; summary: string }
   | { type: "tool_end"; id: string; ok: boolean; summary: string }
   | { type: "recipe"; recipe: Recipe }
+  /** The model proposes a template (starting point); count = matching log lines in the range. */
+  | { type: "template"; template: Template; count: number }
   | { type: "error"; message: string }
   /** Keep-alive while the model or Elasticsearch is busy, so proxies don't close an idle stream. */
   | { type: "ping" }

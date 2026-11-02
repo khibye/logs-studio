@@ -9,8 +9,11 @@ import { HttpError, deployEvents, runEsql } from "./elastic";
 import { systemPrompt } from "./prompt";
 import { llmClient } from "./llm";
 import { log } from "./log";
-import { logFieldsSafe } from "./schema";
-import type { Scope } from "../shared/scope";
+import { logFieldsSafe, matchCount } from "./schema";
+import { ScopeSchema, type Scope } from "../shared/scope";
+import { TemplateSchema } from "../shared/template";
+import type { Context } from "../shared/context";
+import { checkIndices } from "./elastic";
 import {
   PANEL_TYPES,
   PanelSchema,
@@ -131,7 +134,14 @@ function slug(s: string, i: number): string {
 }
 
 /** Validates a dashboard proposed by the model and test-runs each query. */
-async function validateDashboard(args: any, draft: Recipe | null, range: TimeRangeKey, scope: Scope, signal: AbortSignal) {
+async function validateDashboard(
+  args: any,
+  draft: Recipe | null,
+  range: TimeRangeKey,
+  scope: Scope,
+  context: Context | undefined,
+  signal: AbortSignal,
+) {
   const errors: string[] = [];
   const rawPanels: any[] = Array.isArray(args?.panels) ? args.panels : [];
   const seen = new Set<string>();
@@ -178,6 +188,7 @@ async function validateDashboard(args: any, draft: Recipe | null, range: TimeRan
     notes: String(args.notes ?? draft?.notes ?? ""),
     time_range: TIME_RANGE_KEYS.includes(args.time_range) ? args.time_range : draft?.time_range ?? range,
     scope: scope.length ? scope : undefined,
+    context: context ?? draft?.context,
     panels,
   });
   return { recipe };
@@ -193,6 +204,43 @@ function windowArg(args: any): { from: number; to: number } | undefined {
   if (!Number.isFinite(from) || !Number.isFinite(to)) throw new HttpError(400, "from/to must be ISO 8601 dates");
   return { from, to };
 }
+
+const PROPOSE_TEMPLATE_TOOL: ChatCompletionTool = {
+  type: "function",
+  function: {
+    name: "propose_template",
+    description:
+      "Propose a TEMPLATE: a reusable starting point for investigations (indices + focus filters + an explanation for future conversations). The app checks that it matches log lines and shows it to the user, who decides whether to save it. Only after you verified the indices, field names and values with queries.",
+    parameters: {
+      type: "object",
+      properties: {
+        name: { type: "string", description: "Short name, e.g. 'WebUI'" },
+        description: { type: "string", description: "One sentence for the template list" },
+        indices: { type: "array", items: { type: "string" }, description: "Index patterns that hold this data, as specific as possible" },
+        scope: {
+          type: "array",
+          description: "Focus filters. values: exact values or patterns with * (e.g. *webui*). exclude: true = NOT",
+          items: {
+            type: "object",
+            properties: {
+              field: { type: "string" },
+              values: { type: "array", items: { type: "string" } },
+              exclude: { type: "boolean" },
+            },
+            required: ["field", "values"],
+          },
+        },
+        context: {
+          type: "string",
+          description: "For future conversations: what this system is, the important fields and what they mean, how errors look. No live numbers.",
+        },
+        questions: { type: "array", items: { type: "string" }, description: "2-4 useful first questions" },
+      },
+      required: ["name", "indices", "scope", "context"],
+      additionalProperties: false,
+    },
+  },
+};
 
 const LIST_DEPLOYS_TOOL: ChatCompletionTool = {
   type: "function",
@@ -213,7 +261,7 @@ const LIST_DEPLOYS_TOOL: ChatCompletionTool = {
 
 /** Tools offered in this environment (list_deploys only when a deploy query is configured). */
 function toolsFor(): ChatCompletionTool[] {
-  return config.elastic.deployQuery ? [...ALL_TOOLS, LIST_DEPLOYS_TOOL] : ALL_TOOLS;
+  return [...ALL_TOOLS, PROPOSE_TEMPLATE_TOOL, ...(config.elastic.deployQuery ? [LIST_DEPLOYS_TOOL] : [])];
 }
 
 function toolSummary(name: string, args: any): string {
@@ -228,6 +276,8 @@ function toolSummary(name: string, args: any): string {
       return `list_deploys${args?.from ? " (window)" : ""}`;
     case "set_dashboard":
       return `set_dashboard · ${Array.isArray(args?.panels) ? args.panels.length : 0} panels`;
+    case "propose_template":
+      return `propose_template · ${args?.name ?? ""}`;
     default:
       return name;
   }
@@ -240,10 +290,19 @@ export async function runAgent(input: {
   model: string;
   /** Focus filters set by the user; added to every query. */
   scope: Scope;
+  /** Investigation context from a template: indices to use and an explanation. */
+  context?: Context;
   signal: AbortSignal;
   emit: (e: ChatEvent) => void;
 }) {
   const { range, model, scope, signal, emit } = input;
+  const context = input.context;
+  let indices: string[] = [];
+  try {
+    indices = checkIndices(context?.indices);
+  } catch (err: any) {
+    log.warn("chat.context_indices_rejected", { error: err.message });
+  }
   const client = llmClient();
   const started = Date.now();
   let toolCount = 0;
@@ -254,15 +313,17 @@ export async function runAgent(input: {
     range,
     messages: input.messages.length,
     dashboard: input.recipe ? `${input.recipe.title} (${input.recipe.panels.length} panels)` : undefined,
+    template: context?.template?.name,
+    indices: indices.length ? indices.join(",") : undefined,
     scope: scope.length ? scope.map((s) => `${s.field}${s.exclude ? "!=" : "="}${s.values.join("|")}`).join(" ") : undefined,
     question: log.isDebug() ? last?.content?.slice(0, 300) : undefined,
   });
 
   let draft = input.recipe;
   // The field list goes into the prompt, so the model doesn't spend steps discovering it.
-  const fields = await logFieldsSafe();
+  const fields = await logFieldsSafe(indices);
   const convo: ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt(draft, range, { scope, fields }) },
+    { role: "system", content: systemPrompt(draft, range, { scope, fields, context, indices }) },
     ...input.messages.map((m) => ({ role: m.role, content: m.content }) as ChatCompletionMessageParam),
   ];
 
@@ -298,7 +359,7 @@ export async function runAgent(input: {
       let end = "";
       switch (call.name) {
         case "list_indices": {
-          const q = `FROM ${config.elastic.logPatterns.join(", ")} METADATA _index | STATS docs = COUNT(*) BY _index | SORT docs DESC | LIMIT 100`;
+          const q = `FROM ${(indices.length ? indices : config.elastic.logPatterns).join(", ")} METADATA _index | STATS docs = COUNT(*) BY _index | SORT docs DESC | LIMIT 100`;
           const res = await runEsql(q, range, { signal, scope });
           result = preview(res, 100);
           end = `${res.values.length} indices`;
@@ -332,7 +393,7 @@ export async function runAgent(input: {
           break;
         }
         case "set_dashboard": {
-          const v = await validateDashboard(args, draft, range, scope, signal);
+          const v = await validateDashboard(args, draft, range, scope, context, signal);
           if (v.errors) {
             ok = false;
             result = { ok: false, errors: v.errors, hint: "Fix these and call set_dashboard again with all panels." };
@@ -343,6 +404,43 @@ export async function runAgent(input: {
             result = { ok: true, panels: draft.panels.length };
             end = `dashboard updated · ${draft.panels.length} panels`;
           }
+          break;
+        }
+        case "propose_template": {
+          const parsed = TemplateSchema.safeParse({
+            name: args.name,
+            description: args.description ?? "",
+            indices: args.indices ?? [],
+            scope: args.scope ?? [],
+            context: args.context ?? "",
+            questions: (args.questions ?? []).slice(0, 6),
+            time_range: range,
+          });
+          const scopeOk = ScopeSchema.safeParse(args.scope ?? []);
+          if (!parsed.success || !scopeOk.success) {
+            ok = false;
+            const issues = [...(parsed.success ? [] : parsed.error.issues), ...(scopeOk.success ? [] : scopeOk.error.issues)];
+            result = { ok: false, errors: issues.map((i) => `${i.path.join(".")}: ${i.message}`) };
+            end = "invalid, fixing";
+            break;
+          }
+          const t = parsed.data;
+          t.indices = checkIndices(t.indices);
+          const m = await matchCount({ range, scope: t.scope, indices: t.indices, signal });
+          if (m.missing.length || m.count === 0) {
+            ok = false;
+            result = {
+              ok: false,
+              error: m.missing.length
+                ? `These fields don't exist in ${t.indices.join(", ") || "the indices"}: ${m.missing.join(", ")}. Check get_fields.`
+                : "These indices + filters match 0 log lines in the time range. Check the field and the values (case, * patterns) with run_esql, then try again.",
+            };
+            end = m.missing.length ? `unknown field ${m.missing.join(", ")}` : "0 matching lines, fixing";
+            break;
+          }
+          emit({ type: "template", template: t, count: m.count });
+          result = { ok: true, matching_lines: m.count, note: "Shown to the user, who can save it or use it now. Tell them briefly what it covers." };
+          end = `${m.count.toLocaleString("en-US")} matching lines`;
           break;
         }
         default:

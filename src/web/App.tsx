@@ -6,7 +6,11 @@ import { Dashboard, type Origin } from "./components/Dashboard";
 import { Library } from "./components/Library";
 import { Admin } from "./components/Admin";
 import { ScopeBar } from "./components/ScopeBar";
+import { ContextLine, TemplateEditor, TemplatePicker, TemplatesSection, emptyTemplate } from "./components/Templates";
 import type { Scope } from "../shared/scope";
+import { contextFromTemplate, type Template } from "../shared/template";
+import { isEmptyContext, type Context } from "../shared/context";
+import type { TemplatesInfo } from "./api";
 import { navigate, replaceUrl, savedHash, useRoute, withSession } from "./route";
 import { loadChat, newSessionKey, pruneChats, saveChat } from "./chatStore";
 import {
@@ -54,6 +58,23 @@ function readScopePref(): Scope {
 function writeScopePref(s: Scope) {
   try {
     localStorage.setItem(SCOPE_KEY, JSON.stringify(s));
+  } catch {}
+}
+
+/** The template / context a new conversation starts with: the last one used in this browser. */
+const CONTEXT_KEY = "logs-studio:context";
+function readContextPref(): Context | undefined {
+  try {
+    const v = JSON.parse(localStorage.getItem(CONTEXT_KEY) ?? "null");
+    return v && typeof v === "object" ? v : undefined;
+  } catch {
+    return undefined;
+  }
+}
+function writeContextPref(c: Context | undefined) {
+  try {
+    if (c) localStorage.setItem(CONTEXT_KEY, JSON.stringify(c));
+    else localStorage.removeItem(CONTEXT_KEY);
   } catch {}
 }
 
@@ -140,6 +161,24 @@ export function App() {
     writeScopePref(s);
     if (!opts.fromRecipe) setRecipe((cur) => (cur ? { ...cur, scope: s.length ? s : undefined } : cur));
   }, []);
+  /** Starting point (from a template): indices + explanation for the model. Lives with the dashboard too. */
+  const [context, setContextState] = useState<Context | undefined>(readContextPref);
+  const contextRef = useRef(context);
+  contextRef.current = context;
+  const setContext = useCallback((c: Context | undefined, opts: { fromRecipe?: boolean } = {}) => {
+    const v = isEmptyContext(c) ? undefined : c;
+    contextRef.current = v;
+    setContextState(v);
+    writeContextPref(v);
+    if (!opts.fromRecipe) setRecipe((cur) => (cur ? { ...cur, context: v } : cur));
+  }, []);
+  const [starterQuestions, setStarterQuestions] = useState<string[]>([]);
+  const [templatesInfo, setTemplatesInfo] = useState<TemplatesInfo | null>(null);
+  const [editingTemplate, setEditingTemplate] = useState<Template | null>(null);
+  const loadTemplates = useCallback(() => {
+    api.templates().then(setTemplatesInfo, () => setTemplatesInfo(null));
+  }, []);
+  useEffect(() => loadTemplates(), [loadTemplates]);
 
   const showToast = useCallback((t: Toast) => setToast(t), []);
   useEffect(() => {
@@ -221,14 +260,19 @@ export function App() {
       setRestored(false);
     }
     setRecipe(r);
-    if (r) setScope(r.scope ?? [], { fromRecipe: true }); // a new conversation keeps the current focus
+    if (r) {
+      // A new conversation keeps the current focus and template; a dashboard brings its own.
+      setScope(r.scope ?? [], { fromRecipe: true });
+      setContext(r.context, { fromRecipe: true });
+      setStarterQuestions([]);
+    }
     setSavedKey(r ? contentKey(r) : "");
     setOrigin(o);
     setLoadError(null);
     if (r) setRange(r.time_range);
     if (r?.env) setEnvId(r.env);
     draftKey.current = r?.id ?? newKey();
-  }, [restoreChat, setEnvId, setScope]);
+  }, [restoreChat, setEnvId, setScope, setContext]);
 
   // ---- Navigation → state ----
   useEffect(() => {
@@ -349,6 +393,7 @@ export function App() {
           time_range: range,
           model: activeModel || undefined,
           scope: scopeRef.current.length ? scopeRef.current : undefined,
+          context: contextRef.current,
         },
         (ev) => {
           switch (ev.type) {
@@ -369,8 +414,16 @@ export function App() {
               }));
               break;
             case "recipe":
-              setRecipe({ ...ev.recipe, env: envRef.current, scope: scopeRef.current.length ? scopeRef.current : undefined });
+              setRecipe({
+                ...ev.recipe,
+                env: envRef.current,
+                scope: scopeRef.current.length ? scopeRef.current : undefined,
+                context: contextRef.current,
+              });
               setRange(ev.recipe.time_range);
+              break;
+            case "template":
+              patch((m) => ({ ...m, proposals: [...(m.proposals ?? []), { template: ev.template, count: ev.count }] }));
               break;
             case "error":
               patch((m) => ({ ...m, error: ev.message }));
@@ -480,6 +533,49 @@ export function App() {
     },
   };
 
+  // ---- Templates ----
+  /** Use a template in the current conversation (focus + indices + explanation). */
+  const applyTemplate = (t: Template) => {
+    setScope(t.scope);
+    setContext(contextFromTemplate(t));
+    setStarterQuestions(t.questions);
+    if (t.time_range) changeRange(t.time_range);
+    if (t.env && caps?.environments.some((e) => e.id === t.env)) setEnvId(t.env);
+  };
+  /** A new conversation (and no dashboard) starting from a template. */
+  const startTemplate = (t: Template) => {
+    openRecipe(null, "new");
+    applyTemplate(t);
+    navigate("#/");
+    showToast({ tone: "ok", text: `שיחה חדשה מהתבנית "${t.name}"` });
+  };
+  const templateFromCurrent = (): Template => ({
+    ...emptyTemplate(),
+    name: context?.template?.name ?? "",
+    indices: context?.indices ?? [],
+    scope,
+    context: context?.text ?? "",
+    questions: starterQuestions,
+    time_range: range,
+  });
+  const templateEditor = editingTemplate && (
+    <TemplateEditor
+      initial={editingTemplate}
+      info={templatesInfo}
+      caps={caps}
+      envId={envId}
+      range={range}
+      onClose={() => setEditingTemplate(null)}
+      onSaved={(t) => {
+        setEditingTemplate(null);
+        loadTemplates();
+        // The conversation now runs on the saved template.
+        if (view === "studio") setContext({ ...contextFromTemplate(t) });
+        showToast({ tone: "ok", text: `התבנית "${t.name}" נשמרה` });
+      }}
+    />
+  );
+
   const dirty = recipe ? contentKey(recipe) !== savedKey : false;
   const view = route.name === "library" ? "library" : route.name === "admin" ? "admin" : "studio";
 
@@ -514,7 +610,21 @@ export function App() {
           }}
         />
       ) : view === "library" ? (
-        <Library caps={caps} recent={recent} onRecentChange={() => setRecent(loadRecent())} onImport={importFile} />
+        <Library
+          caps={caps}
+          recent={recent}
+          onRecentChange={() => setRecent(loadRecent())}
+          onImport={importFile}
+          templates={
+            <TemplatesSection
+              info={templatesInfo}
+              onStart={startTemplate}
+              onEdit={(t) => setEditingTemplate(t)}
+              onNew={() => setEditingTemplate(emptyTemplate())}
+              onChanged={loadTemplates}
+            />
+          }
+        />
       ) : (
         <main className="studio">
           <Chat
@@ -533,7 +643,38 @@ export function App() {
             onStop={() => chatCtrl.current?.abort()}
             restored={restored}
             retentionHours={retention}
-            focus={<ScopeBar scope={scope} onChange={(s) => setScope(s)} range={range} envId={envId} disabled={busy} />}
+            focus={
+              <>
+                <ContextLine
+                  context={context}
+                  disabled={busy}
+                  canSave={Boolean(templatesInfo?.saveTo) && (scope.length > 0 || !isEmptyContext(context))}
+                  onSave={() => setEditingTemplate(templateFromCurrent())}
+                  onClear={() => {
+                    setContext(undefined);
+                    setScope([]);
+                    setStarterQuestions([]);
+                  }}
+                />
+                <ScopeBar
+                  scope={scope}
+                  onChange={(s) => setScope(s)}
+                  range={range}
+                  envId={envId}
+                  indices={context?.indices}
+                  disabled={busy}
+                />
+              </>
+            }
+            starter={
+              <TemplatePicker info={templatesInfo} onStart={applyTemplate} onNew={() => setEditingTemplate(templateFromCurrent())} />
+            }
+            suggestions={starterQuestions}
+            onSaveProposal={(t) => setEditingTemplate({ ...t })}
+            onUseProposal={(t) => {
+              applyTemplate(t);
+              showToast({ tone: "ok", text: "השיחה ממשיכה עם התבנית. אפשר לשמור אותה בכל רגע." });
+            }}
             onNewChat={() => {
               chatCtrl.current?.abort();
               saveChat(sessionKey.current, [], retention); // forget it here too
@@ -566,6 +707,7 @@ export function App() {
         </main>
       )}
 
+      {templateEditor}
       {toast && (
         <div className={`toast ${toast.tone}`} role="status">
           <span>{toast.text}</span>

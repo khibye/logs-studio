@@ -26,16 +26,43 @@ export function ScopeBar(props: {
   onChange: (s: Scope) => void;
   range: TimeRangeKey;
   envId: string;
+  /** Index patterns of the current template / context (empty = all). */
+  indices?: string[];
   disabled?: boolean;
+  /** Show how many log lines the focus matches (default on). */
+  showCount?: boolean;
 }) {
-  const { scope, onChange, range, envId, disabled } = props;
+  const { scope, onChange, range, envId, indices, disabled, showCount = true } = props;
   const [fields, setFields] = useState<Fields | null>(null);
   const [editing, setEditing] = useState<number | "new" | null>(null);
+  const [count, setCount] = useState<{ count?: number; missing?: string[]; error?: string; loading?: boolean } | null>(null);
+  const idxKey = (indices ?? []).join(",");
 
   useEffect(() => {
     setFields(null);
-    api.scopeFields().then(setFields, () => setFields({ suggested: [], fields: [] }));
-  }, [envId]);
+    api.scopeFields(indices).then(setFields, () => setFields({ suggested: [], fields: [] }));
+  }, [envId, idxKey]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // How many lines the focus matches: a wrong field or value shows up here, not as a puzzled model.
+  const scopeKey = JSON.stringify(scope);
+  useEffect(() => {
+    if (!showCount || !scope.length) {
+      setCount(null);
+      return;
+    }
+    const ctrl = new AbortController();
+    setCount((c) => ({ ...c, loading: true }));
+    const t = setTimeout(() => {
+      api.scopeCount(range, scope, indices, ctrl.signal).then(
+        (r) => setCount(r),
+        (e) => !ctrl.signal.aborted && setCount({ error: e.message }),
+      );
+    }, 250);
+    return () => {
+      clearTimeout(t);
+      ctrl.abort();
+    };
+  }, [scopeKey, range, envId, idxKey, showCount]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const save = (f: ScopeFilter | null) => {
     const next = [...scope];
@@ -92,6 +119,26 @@ export function ScopeBar(props: {
           </button>
         )}
       </div>
+      {count && !count.loading && (
+        <div
+          className={`scope-count ${count.missing?.length || count.count === 0 || count.error ? "bad" : ""}`}
+          role="status"
+        >
+          {count.error ? (
+            <>לא הצלחתי לספור: {count.error}</>
+          ) : count.missing?.length ? (
+            <>
+              השדה <bdi dir="ltr">{count.missing.join(", ")}</bdi> לא קיים באינדקסים. כדאי לבחור שדה אחר.
+            </>
+          ) : count.count === 0 ? (
+            <>אין אף שורה שמתאימה למיקוד בטווח הזמן. כדאי לבדוק את השדה ואת הערך (אותיות גדולות/קטנות, <code dir="ltr">*</code>).</>
+          ) : (
+            <>
+              <bdi dir="ltr">{numberFmt.format(count.count ?? 0)}</bdi> שורות מתאימות למיקוד
+            </>
+          )}
+        </div>
+      )}
       {editing !== null && (
         <ScopeForm
           key={String(editing)}
@@ -100,6 +147,7 @@ export function ScopeBar(props: {
           used={scope.filter((_, i) => i !== editing).map((f) => f.field)}
           scope={scope.filter((_, i) => i !== editing)}
           range={range}
+          indices={indices}
           onSave={save}
           onCancel={() => setEditing(null)}
         />
@@ -114,10 +162,11 @@ function ScopeForm(props: {
   used: string[];
   scope: Scope;
   range: TimeRangeKey;
+  indices?: string[];
   onSave: (f: ScopeFilter | null) => void;
   onCancel: () => void;
 }) {
-  const { initial, fields, used, scope, range, onSave, onCancel } = props;
+  const { initial, fields, used, scope, range, indices, onSave, onCancel } = props;
   const options = (fields?.suggested ?? []).filter((f) => !used.includes(f) || f === initial?.field);
   const [field, setField] = useState(initial?.field ?? options[0] ?? "");
   const [other, setOther] = useState(Boolean(initial && !options.includes(initial.field)) || (fields !== null && !options.length));
@@ -143,7 +192,7 @@ function ScopeForm(props: {
     setSugg((s) => ({ ...s, loading: true }));
     const t = setTimeout(() => {
       api
-        .scopeValues(field, typed.replace(/\*/g, ""), range, scope, ctrl.signal)
+        .scopeValues(field, typed.replace(/\*/g, ""), range, scope, indices, ctrl.signal)
         .then((r) => setSugg(r))
         .catch((e) => !ctrl.signal.aborted && setSugg({ values: [], reason: e.message }));
     }, 300);

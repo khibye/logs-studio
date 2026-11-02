@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { Icon } from "./icons";
 import { savedHash } from "../route";
@@ -12,6 +12,8 @@ export function Library(props: {
   recent: RecentItem[];
   onRecentChange: () => void;
   onImport: (file: File) => void;
+  /** The templates section (rendered by the app, which owns the template state). */
+  templates?: ReactNode;
 }) {
   const { caps, recent } = props;
   const [q, setQ] = useState("");
@@ -76,6 +78,8 @@ export function Library(props: {
           </a>
         </div>
       </div>
+
+      {props.templates}
 
       <section aria-labelledby="lib-shared">
         <h2 id="lib-shared" className="section-title">
