@@ -143,6 +143,8 @@ export function Header(props: {
   onRange: (r: TimeRangeKey) => void;
   onRefreshSec: (s: number) => void;
   onRefreshNow: () => void;
+  /** The range / focus changed since the panels last ran. */
+  pending?: boolean;
   onRecheck: () => void;
 }) {
   const { view, studioHref, caps, range, refreshSec } = props;
@@ -193,8 +195,15 @@ export function Header(props: {
               ))}
             </select>
           </label>
-          <button type="button" className="btn icon" onClick={props.onRefreshNow} aria-label="רענן עכשיו" title="רענן עכשיו">
-            <Icon.Refresh size={16} />
+          <button
+            type="button"
+            className={`btn ${props.pending ? "primary run-all" : "icon"}`}
+            onClick={props.onRefreshNow}
+            aria-label="הרץ את כל הפאנלים"
+            title={props.pending ? "טווח הזמן או המיקוד השתנו: הרץ את כל הפאנלים" : "הרץ את כל הפאנלים"}
+          >
+            <Icon.Play size={16} />
+            {props.pending && <span>הרץ הכל</span>}
           </button>
         </div>
       )}

@@ -161,25 +161,50 @@ export function PanelView(props: {
   comparePrev: boolean;
   annotations?: Annotation[];
   multiEnv: boolean;
-  /** Manual mode: the panel runs only when its run button is pressed. */
+  /** Manual mode: the panel runs only when its run button (or "run all") is pressed. */
   manual?: boolean;
+  /** The range / focus selected now (the panel runs with `range` / `scope` until asked). */
+  pendingRange?: TimeRangeKey;
+  pendingScope?: Scope;
+  /** The whole dashboard is waiting for "run all" (shown once at the top, not on every panel). */
+  dashboardPending?: boolean;
   onAsk: (text: string) => void;
   onRemove: () => void;
 }) {
-  const { panel, range: liveRange, tick: liveTick, scope: liveScope, discoverBase, envId, envName, compareEnv, comparePrev, annotations, multiEnv, manual, onAsk, onRemove } =
-    props;
-  // Runs of this panel alone. Auto mode: added to the dashboard's refresh counter.
-  // Manual mode: the panel runs only on its button, with the range / focus of that moment.
-  const [ownRuns, setOwnRuns] = useState(0);
-  const [manualRun, setManualRun] = useState<{ range: TimeRangeKey; scopeKey: string; n: number } | null>(null);
-  const liveScopeKey = JSON.stringify(liveScope ?? []);
-  const range = manual && manualRun ? manualRun.range : liveRange;
-  const scope = manual && manualRun ? (JSON.parse(manualRun.scopeKey) as Scope) : liveScope;
-  const tick = manual ? manualRun?.n ?? 0 : liveTick + ownRuns;
-  const active = !manual || Boolean(manualRun);
-  const stale = Boolean(manual && manualRun && (manualRun.range !== liveRange || manualRun.scopeKey !== liveScopeKey));
+  const {
+    panel,
+    range: appliedRange,
+    tick: liveTick,
+    scope: appliedScope,
+    discoverBase,
+    envId,
+    envName,
+    compareEnv,
+    comparePrev,
+    annotations,
+    multiEnv,
+    manual,
+    dashboardPending,
+    onAsk,
+    onRemove,
+  } = props;
+  const pendingRange = props.pendingRange ?? appliedRange;
+  const pendingScopeKey = JSON.stringify(props.pendingScope ?? appliedScope ?? []);
+  // This panel's own run (its ▶ button): the range / focus selected at that moment, until
+  // the next "run all". Otherwise the panel follows what the dashboard last ran with.
+  const [own, setOwn] = useState<{ range: TimeRangeKey; scopeKey: string; n: number; tick: number } | null>(null);
+  const mountTick = useRef(liveTick);
+  const ownActive = own && own.tick === liveTick ? own : null;
+  const range = ownActive?.range ?? appliedRange;
+  const scope = ownActive ? (JSON.parse(ownActive.scopeKey) as Scope) : appliedScope;
+  const tick = liveTick * 1000 + (ownActive?.n ?? 0);
+  // Manual mode: nothing runs until this panel's ▶ or "run all".
+  const active = !manual || Boolean(ownActive) || liveTick !== mountTick.current;
+  const scopeKey = JSON.stringify(scope ?? []);
+  const differs = range !== pendingRange || scopeKey !== pendingScopeKey;
+  const stale = active && differs && (Boolean(ownActive) || !dashboardPending);
   const runThis = () =>
-    manual ? setManualRun((r) => ({ range: liveRange, scopeKey: liveScopeKey, n: (r?.n ?? 0) + 1 })) : setOwnRuns((n) => n + 1);
+    setOwn((o) => ({ range: pendingRange, scopeKey: pendingScopeKey, n: (o && o.tick === liveTick ? o.n : 0) + 1, tick: liveTick }));
   const [showQuery, setShowQuery] = useState(false);
   const [showData, setShowData] = useState(false);
   const [point, setPoint] = useState<{ p: PointInfo; side: number } | null>(null);
@@ -385,10 +410,10 @@ export function PanelView(props: {
               className={`icon-btn ${loading ? "spinning" : ""}`}
               onClick={runThis}
               disabled={loading}
-              title={manual ? (active ? "הרץ שוב את הפאנל" : "הרץ את הפאנל") : "הרץ שוב רק את הפאנל הזה"}
+              title={`הרץ רק את הפאנל הזה (${TIME_RANGES[pendingRange].label})`}
               aria-label="הרץ את הפאנל"
             >
-              {manual && !active ? <Icon.Play size={15} /> : <Icon.Refresh size={15} />}
+              <Icon.Play size={15} />
             </button>
           )}
           {panel.esql && (
@@ -441,7 +466,7 @@ export function PanelView(props: {
       {stale && (
         <div className="panel-note">
           הנתונים מ{TIME_RANGES[range].label}
-          {manualRun?.scopeKey !== liveScopeKey ? " ומיקוד קודם" : ""}.{" "}
+          {scopeKey !== pendingScopeKey ? " ומיקוד קודם" : ""}.{" "}
           <button type="button" className="link-btn" onClick={runThis}>
             הרץ שוב
           </button>

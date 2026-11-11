@@ -5,7 +5,8 @@ import { Menu } from "./Menu";
 import { PanelView } from "./Panel";
 import { savedHash } from "../route";
 import type { RecentItem } from "../share";
-import type { Annotation, Capabilities, DashboardSummary, Recipe, TimeRangeKey } from "../../shared/recipe";
+import { TIME_RANGES, type Annotation, type Capabilities, type DashboardSummary, type Recipe, type TimeRangeKey } from "../../shared/recipe";
+import type { Scope } from "../../shared/scope";
 
 const PREV_KEY = "logs-studio:compare-prev";
 const DEPLOYS_KEY = "logs-studio:show-deploys";
@@ -109,13 +110,20 @@ export function Dashboard(props: {
   dirty: boolean;
   origin: Origin;
   caps: Capabilities | null;
+  /** The range / focus the panels run with (applied on "run all"). */
   range: TimeRangeKey;
+  scope?: Scope;
+  /** What is selected now; panels whose data is older say so. */
+  pendingRange: TimeRangeKey;
+  pendingScope?: Scope;
+  onRunAll: () => void;
   tick: number;
   saving: boolean;
   recent: RecentItem[];
   actions: DashboardActions;
 }) {
-  const { recipe, dirty, origin, caps, range, tick, saving, recent, actions } = props;
+  const { recipe, dirty, origin, caps, range, scope, pendingRange, pendingScope, onRunAll, tick, saving, recent, actions } = props;
+  const pending = range !== pendingRange || JSON.stringify(scope ?? []) !== JSON.stringify(pendingScope ?? []);
   const fileRef = useRef<HTMLInputElement>(null);
   const canWrite = Boolean(caps?.library.write);
   const canRead = Boolean(caps?.library.read);
@@ -336,6 +344,22 @@ export function Dashboard(props: {
         </div>
       </div>
 
+      {pending && hasPanels && (
+        <div className="run-banner" role="status">
+          <span>
+            {range !== pendingRange ? (
+              <>
+                טווח הזמן השתנה ל{TIME_RANGES[pendingRange].label}. הפאנלים עדיין מציגים {TIME_RANGES[range].label}.
+              </>
+            ) : (
+              <>המיקוד השתנה. הפאנלים עדיין מציגים את המיקוד הקודם.</>
+            )}
+          </span>
+          <button type="button" className="btn small primary" onClick={onRunAll}>
+            <Icon.Play size={13} /> הרץ הכל
+          </button>
+        </div>
+      )}
       <div className="view-bar" role="toolbar" aria-label="אפשרויות תצוגה">
         <Toggle
           on={comparePrev && !compareEnv}
@@ -394,7 +418,10 @@ export function Dashboard(props: {
             panel={p}
             range={range}
             tick={tick}
-            scope={recipe.scope}
+            scope={scope}
+            pendingRange={pendingRange}
+            pendingScope={pendingScope}
+            dashboardPending={pending}
             discoverBase={caps?.discover.enabled ? caps.discover.baseUrl : undefined}
             envId={envId}
             envName={caps?.env.name}

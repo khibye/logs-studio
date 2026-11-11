@@ -131,9 +131,15 @@ export function App() {
   const [recipe, setRecipe] = useState<Recipe | null>(null);
   const [savedKey, setSavedKey] = useState("");
   const [origin, setOrigin] = useState<Origin>("new");
+  /** The time range selected in the header (the model works with it). */
   const [range, setRange] = useState<TimeRangeKey>("24h");
   const [refreshSec, setRefreshSec] = useState(0);
   const [tick, setTick] = useState(0);
+  /**
+   * What the panels currently show. Changing the range or the focus doesn't re-run the
+   * dashboard: the panels keep this until "run all" (or a panel's own run button).
+   */
+  const [applied, setApplied] = useState<{ range: TimeRangeKey; scope: Scope }>({ range: "24h", scope: [] });
   const [messages, setMessages] = useState<UiMessage[]>([]);
   const [busy, setBusy] = useState(false);
   const [saving, setSaving] = useState(false);
@@ -149,6 +155,8 @@ export function App() {
   const sessionKey = useRef(newSessionKey());
   const [restored, setRestored] = useState(false);
   const recipeRef = useRef<Recipe | null>(null);
+  const rangeRef = useRef(range);
+  rangeRef.current = range;
   const loadingRef = useRef(false);
   recipeRef.current = recipe;
   /** Focus filters: part of the dashboard when there is one, otherwise just for the conversation. */
@@ -160,6 +168,7 @@ export function App() {
     setScopeState(s);
     writeScopePref(s);
     if (!opts.fromRecipe) setRecipe((cur) => (cur ? { ...cur, scope: s.length ? s : undefined } : cur));
+    if (!recipeRef.current) setApplied((a) => ({ ...a, scope: s }));
   }, []);
   /** Starting point (from a template): indices + explanation for the model. Lives with the dashboard too. */
   const [context, setContextState] = useState<Context | undefined>(readContextPref);
@@ -269,7 +278,10 @@ export function App() {
     setSavedKey(r ? contentKey(r) : "");
     setOrigin(o);
     setLoadError(null);
-    if (r) setRange(r.time_range);
+    if (r) {
+      setRange(r.time_range);
+      setApplied({ range: r.time_range, scope: r.scope ?? [] });
+    }
     if (r?.env) setEnvId(r.env);
     draftKey.current = r?.id ?? newKey();
   }, [restoreChat, setEnvId, setScope, setContext]);
@@ -367,7 +379,14 @@ export function App() {
   const changeRange = (r: TimeRangeKey) => {
     setRange(r);
     setRecipe((cur) => (cur ? { ...cur, time_range: r } : cur));
+    // Without a dashboard there is nothing to re-run: just follow the selection.
+    if (!recipeRef.current) setApplied((a) => ({ ...a, range: r }));
   };
+  /** "Run all": every panel runs with the selected range and focus. */
+  const runAll = useCallback(() => {
+    setApplied({ range: rangeRef.current, scope: scopeRef.current });
+    setTick((t) => t + 1);
+  }, []);
 
   // ---- Chat ----
   const send = async (text: string) => {
@@ -421,6 +440,8 @@ export function App() {
                 context: contextRef.current,
               });
               setRange(ev.recipe.time_range);
+              // A dashboard the model just built runs right away.
+              setApplied({ range: ev.recipe.time_range, scope: scopeRef.current });
               break;
             case "template":
               patch((m) => ({ ...m, proposals: [...(m.proposals ?? []), { template: ev.template, count: ev.count }] }));
@@ -594,7 +615,8 @@ export function App() {
         refreshSec={refreshSec}
         onRange={changeRange}
         onRefreshSec={setRefreshSec}
-        onRefreshNow={() => setTick((t) => t + 1)}
+        onRefreshNow={runAll}
+        pending={Boolean(recipe) && (applied.range !== range || JSON.stringify(applied.scope) !== JSON.stringify(scope))}
         onRecheck={() => {
           setCaps(null);
           loadCaps(true);
@@ -696,7 +718,11 @@ export function App() {
                 dirty={dirty}
                 origin={origin}
                 caps={caps}
-                range={range}
+                range={applied.range}
+                scope={applied.scope}
+                pendingRange={range}
+                pendingScope={scope}
+                onRunAll={runAll}
                 tick={tick}
                 saving={saving}
                 recent={recent}

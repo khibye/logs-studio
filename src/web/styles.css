@@ -461,3 +461,5 @@ h4.sub { margin: 4px 0 -2px; font-size: 12.5px; color: var(--muted); font-weight
 .icon-btn.spinning svg { animation: spin 1s linear infinite; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .icon-btn.spinning svg { animation: none; } }
+.run-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: 12px; background: var(--accent-soft); color: var(--accent-dark); font-size: 13px; }
+.btn.run-all { display: inline-flex; align-items: center; gap: 6px; }
