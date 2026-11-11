@@ -9,6 +9,7 @@ import type { Annotation, Capabilities, DashboardSummary, Recipe, TimeRangeKey }
 
 const PREV_KEY = "logs-studio:compare-prev";
 const DEPLOYS_KEY = "logs-studio:show-deploys";
+const MANUAL_KEY = "logs-studio:manual-run";
 function readFlag(key: string, fallback: boolean): boolean {
   try {
     const v = localStorage.getItem(key);
@@ -127,6 +128,8 @@ export function Dashboard(props: {
   // ---- View options (per browser; not part of the dashboard) ----
   const [comparePrev, setComparePrev] = useState(() => readFlag(PREV_KEY, true));
   const [showDeploys, setShowDeploys] = useState(() => readFlag(DEPLOYS_KEY, true));
+  /** Panels run only when asked (heavy dashboards / slow clusters). */
+  const [manual, setManual] = useState(() => readFlag(MANUAL_KEY, false));
   const [compareEnvId, setCompareEnvId] = useState("");
   const compareEnv = envs.find((e) => e.id === compareEnvId && e.id !== envId) ?? null;
 
@@ -344,6 +347,16 @@ export function Dashboard(props: {
         >
           השוואה לתקופה קודמת
         </Toggle>
+        <Toggle
+          on={manual}
+          onChange={(v) => {
+            setManual(v);
+            writeFlag(MANUAL_KEY, v);
+          }}
+          title="כל פאנל רץ רק כשלוחצים על כפתור ההרצה שלו, במקום כל הדשבורד ביחד"
+        >
+          הרצה ידנית לכל פאנל
+        </Toggle>
         {deploysOn && (
           <Toggle
             on={showDeploys}
@@ -387,6 +400,7 @@ export function Dashboard(props: {
             envName={caps?.env.name}
             compareEnv={compareEnv}
             comparePrev={comparePrev}
+            manual={manual}
             annotations={showDeploys ? annotations.events : undefined}
             multiEnv={envs.length > 1}
             onAsk={actions.ask}

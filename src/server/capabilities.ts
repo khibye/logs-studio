@@ -1,3 +1,4 @@
+import { libraryState } from "./library";
 import { BUILD } from "./build";
 import { config, kibanaBase, onConfigChange, withEnv } from "./config";
 import { es, HttpError } from "./elastic";
@@ -131,7 +132,18 @@ export async function getCapabilities(force = false): Promise<Capabilities> {
       caps.logs.reason = `Privilege check failed: ${err.message}`;
     }
   }
-  caps.library = await libraryPromise;
+  // Combine Elasticsearch with the app's own volume (DATA_DIR): dashboards can be saved there too.
+  const esLib = await libraryPromise;
+  const st = libraryState(esLib);
+  caps.library = {
+    ...esLib,
+    read: esLib.read || st.server.write,
+    write: Boolean(st.saveTo),
+    store: st.saveTo,
+    reason: st.saveTo ? undefined : [esLib.reason, st.server.reason].filter(Boolean).join("; "),
+    es: { read: esLib.read, write: esLib.write, reason: esLib.reason },
+    server: st.server,
+  };
 
   if (!config.kibana.url) {
     caps.kibanaExport.reason = "KIBANA_URL is not set";

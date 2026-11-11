@@ -159,6 +159,15 @@ export const SETTINGS: SettingDef[] = [
     help: "info: כל בקשה, כל שיחה וכל צעד של המודל. debug: גם כל שאילתה ל-Elasticsearch וכל קריאה למודל, עם זמנים. מפתחות וסיסמאות לא נכתבים ללוג.",
   },
   {
+    key: "DASHBOARDS_STORE",
+    group: "app",
+    kind: "enum",
+    options: ["auto", "library", "server"],
+    default: "auto",
+    label: "איפה נשמרים דשבורדים",
+    help: "library: באינדקס באלסטיק (צריך read + create_doc). server: בקבצים בתיקיית הנתונים של האפליקציה (DATA_DIR/dashboards, על ה-PVC), עובד גם עם מפתח לקריאה בלבד. auto: אלסטיק אם אפשר לכתוב אליו, אחרת השרת.",
+  },
+  {
     key: "TEMPLATES_STORE",
     group: "app",
     kind: "enum",

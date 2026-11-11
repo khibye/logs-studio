@@ -161,11 +161,25 @@ export function PanelView(props: {
   comparePrev: boolean;
   annotations?: Annotation[];
   multiEnv: boolean;
+  /** Manual mode: the panel runs only when its run button is pressed. */
+  manual?: boolean;
   onAsk: (text: string) => void;
   onRemove: () => void;
 }) {
-  const { panel, range, tick, scope, discoverBase, envId, envName, compareEnv, comparePrev, annotations, multiEnv, onAsk, onRemove } =
+  const { panel, range: liveRange, tick: liveTick, scope: liveScope, discoverBase, envId, envName, compareEnv, comparePrev, annotations, multiEnv, manual, onAsk, onRemove } =
     props;
+  // Runs of this panel alone. Auto mode: added to the dashboard's refresh counter.
+  // Manual mode: the panel runs only on its button, with the range / focus of that moment.
+  const [ownRuns, setOwnRuns] = useState(0);
+  const [manualRun, setManualRun] = useState<{ range: TimeRangeKey; scopeKey: string; n: number } | null>(null);
+  const liveScopeKey = JSON.stringify(liveScope ?? []);
+  const range = manual && manualRun ? manualRun.range : liveRange;
+  const scope = manual && manualRun ? (JSON.parse(manualRun.scopeKey) as Scope) : liveScope;
+  const tick = manual ? manualRun?.n ?? 0 : liveTick + ownRuns;
+  const active = !manual || Boolean(manualRun);
+  const stale = Boolean(manual && manualRun && (manualRun.range !== liveRange || manualRun.scopeKey !== liveScopeKey));
+  const runThis = () =>
+    manual ? setManualRun((r) => ({ range: liveRange, scopeKey: liveScopeKey, n: (r?.n ?? 0) + 1 })) : setOwnRuns((n) => n + 1);
   const [showQuery, setShowQuery] = useState(false);
   const [showData, setShowData] = useState(false);
   const [point, setPoint] = useState<{ p: PointInfo; side: number } | null>(null);
@@ -177,9 +191,9 @@ export function PanelView(props: {
   const prevKind: Compare | undefined =
     !comparePrev || compareEnv ? undefined : panel.type === "metric" ? "previous" : panel.type === "line" || panel.type === "area" ? chartCompare(range) : undefined;
 
-  const main = usePanelData(panel, range, tick, { enabled: true, scope });
-  const prev = usePanelData(panel, range, tick, { enabled: Boolean(prevKind), compare: prevKind, scope });
-  const other = usePanelData(panel, range, tick, { enabled: Boolean(compareEnv), env: compareEnv?.id, scope });
+  const main = usePanelData(panel, range, tick, { enabled: active, scope });
+  const prev = usePanelData(panel, range, tick, { enabled: active && Boolean(prevKind), compare: prevKind, scope });
+  const other = usePanelData(panel, range, tick, { enabled: active && Boolean(compareEnv), env: compareEnv?.id, scope });
   /** The query as it actually runs (with the focus filters) — for Discover. */
   const runEsql = panel.esql ? applyScope(panel.esql, scope) : undefined;
 
@@ -244,6 +258,14 @@ export function PanelView(props: {
         <div className="panel-error" role="alert">
           <strong>השאילתה נכשלה</strong>
           <span dir="ltr">{st.error}</span>
+        </div>
+      );
+    if (!active)
+      return (
+        <div className="panel-idle" style={{ height: height || 72 }}>
+          <button type="button" className="btn small" onClick={runThis}>
+            <Icon.Play size={13} /> הרץ את הפאנל
+          </button>
         </div>
       );
     if (!st.data) return <div className="panel-skeleton" style={{ height: height || 72 }} />;
@@ -360,6 +382,18 @@ export function PanelView(props: {
           {panel.esql && (
             <button
               type="button"
+              className={`icon-btn ${loading ? "spinning" : ""}`}
+              onClick={runThis}
+              disabled={loading}
+              title={manual ? (active ? "הרץ שוב את הפאנל" : "הרץ את הפאנל") : "הרץ שוב רק את הפאנל הזה"}
+              aria-label="הרץ את הפאנל"
+            >
+              {manual && !active ? <Icon.Play size={15} /> : <Icon.Refresh size={15} />}
+            </button>
+          )}
+          {panel.esql && (
+            <button
+              type="button"
               className="icon-btn"
               onClick={exportCsv}
               disabled={exporting || !main.data}
@@ -403,6 +437,15 @@ export function PanelView(props: {
         <pre className="query" dir="ltr">
           {panel.esql}
         </pre>
+      )}
+      {stale && (
+        <div className="panel-note">
+          הנתונים מ{TIME_RANGES[range].label}
+          {manualRun?.scopeKey !== liveScopeKey ? " ומיקוד קודם" : ""}.{" "}
+          <button type="button" className="link-btn" onClick={runThis}>
+            הרץ שוב
+          </button>
+        </div>
       )}
       {main.data?.truncated && <div className="panel-note">התוצאה קוצצה למגבלת השורות. בהורדת CSV יורדות יותר שורות.</div>}
       {exportError && (

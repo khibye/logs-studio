@@ -39,13 +39,19 @@ export function CapsList({ caps }: { caps: Capabilities }) {
       <Row
         ok={caps.library.write ? true : caps.library.read ? "partial" : false}
         title={
-          caps.library.write
-            ? `ספרייה משותפת (${caps.library.index}): קריאה וכתיבה`
-            : caps.library.read
-              ? `ספרייה משותפת (${caps.library.index}): קריאה בלבד`
-              : `ספרייה משותפת (${caps.library.index}): לא זמינה`
+          caps.library.store === "server"
+            ? "ספרייה משותפת: נשמרת בשרת האפליקציה (PVC)"
+            : caps.library.write
+              ? `ספרייה משותפת (${caps.library.index}): קריאה וכתיבה`
+              : caps.library.read
+                ? `ספרייה משותפת (${caps.library.index}): קריאה בלבד`
+                : `ספרייה משותפת (${caps.library.index}): לא זמינה`
         }
-        detail={caps.library.reason}
+        detail={
+          caps.library.store === "server"
+            ? `${caps.library.server?.dir}/dashboards${caps.library.es?.read ? ` · גם דשבורדים מ-${caps.library.index} מוצגים` : ""}`
+            : caps.library.reason
+        }
       />
       <Row ok={true} title="שמירה בקישור ובקובץ JSON" />
       <Row

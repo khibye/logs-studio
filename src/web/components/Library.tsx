@@ -83,7 +83,14 @@ export function Library(props: {
 
       <section aria-labelledby="lib-shared">
         <h2 id="lib-shared" className="section-title">
-          ספרייה משותפת <bdi dir="ltr" className="muted">({caps?.library.index ?? "ai-dashboards"})</bdi>
+          ספרייה משותפת{" "}
+          <span className="muted small">
+            {caps?.library.store === "server" ? (
+              <>· נשמרת בשרת האפליקציה (<bdi dir="ltr">{caps.library.server?.dir}/dashboards</bdi>)</>
+            ) : (
+              <bdi dir="ltr">({caps?.library.index ?? "ai-dashboards"})</bdi>
+            )}
+          </span>
         </h2>
         {!caps ? (
           <div className="card muted">בודק הרשאות…</div>
@@ -92,7 +99,8 @@ export function Library(props: {
             <strong>הספרייה המשותפת לא זמינה כרגע.</strong>
             <p>
               אפשר לשמור ולשתף דשבורדים דרך "העתק קישור" (הדשבורד כולו נשמר בתוך הקישור) או דרך ייצוא לקובץ JSON. כדי להפעיל
-              ספרייה משותפת עם גרסאות, צריך הרשאות <code dir="ltr">read</code> ו-<code dir="ltr">create_doc</code> על האינדקס.
+              ספרייה משותפת עם גרסאות, צריך הרשאות <code dir="ltr">read</code> ו-<code dir="ltr">create_doc</code> על האינדקס, או
+              תיקיית נתונים שאפשר לכתוב אליה (<code dir="ltr">DATA_DIR</code> על PVC).
             </p>
             {caps.library.reason && (
               <p className="muted">
@@ -132,6 +140,11 @@ export function Library(props: {
                       {envs.length > 1 && (
                         <span className="badge env-badge" title="נפתח בסביבה הזו; אפשר להריץ אותו על כל סביבה">
                           {envName(d.env)}
+                        </span>
+                      )}
+                      {caps?.library.es?.read && caps.library.server?.write && (
+                        <span className="badge" title={d.store === "server" ? "שמור בשרת האפליקציה" : "שמור באלסטיק"}>
+                          {d.store === "server" ? "שרת" : "אלסטיק"}
                         </span>
                       )}
                       {d.notes && <div className="lib-notes">{d.notes}</div>}

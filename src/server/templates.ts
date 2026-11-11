@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { dataWritable, writeJsonAtomic } from "./datastore";
 import path from "node:path";
 import { config, withEnv } from "./config";
 import { HttpError, checkIndices, es as rawEs } from "./elastic";
@@ -46,22 +47,8 @@ function readFileStore(): Template[] {
 }
 
 function writeFileStore(list: Template[]) {
-  mkdirSync(dataDir, { recursive: true });
-  const tmp = `${file}.${process.pid}.tmp`;
   const body: FileShape = { version: 1, templates: list.map(({ store: _s, ...t }) => t) };
-  writeFileSync(tmp, JSON.stringify(body, null, 2), { mode: 0o600 });
-  renameSync(tmp, file);
-}
-
-function serverWritable(): { write: boolean; reason?: string } {
-  try {
-    mkdirSync(dataDir, { recursive: true });
-    const probe = path.join(dataDir, ".write-test");
-    writeFileSync(probe, "");
-    return { write: true };
-  } catch (err: any) {
-    return { write: false, reason: `התיקייה ${dataDir} לא ניתנת לכתיבה: ${err.code ?? err.message}` };
-  }
+  writeJsonAtomic(file, body);
 }
 
 // ---------------------------------------------------------------------------
@@ -139,9 +126,11 @@ async function libraryPut(id: string, version: number, body: unknown, title: str
 // ---------------------------------------------------------------------------
 
 async function storesInfo(): Promise<TemplatesInfo["stores"] & { saveTo: Store | null }> {
-  const lib = (await getCapabilities()).library;
+  const caps = (await getCapabilities()).library;
+  const lib = caps.es ?? caps;
   const library = { read: lib.read, write: lib.write, reason: lib.write ? undefined : lib.reason };
-  const server = serverWritable();
+  const { write, reason } = dataWritable();
+  const server = { write, reason };
   const pref = (rawValue("TEMPLATES_STORE") ?? "auto") as "auto" | Store;
   const saveTo: Store | null =
     pref === "library" ? (library.write ? "library" : null)

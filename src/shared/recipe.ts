@@ -117,13 +117,28 @@ export type DashboardSummary = {
   versions: number;
   forked_from?: Ref;
   env?: string;
+  /** Where it is saved: Elasticsearch ("library") or the app server's volume ("server"). */
+  store?: "library" | "server";
 };
 
 export type Capabilities = {
   elastic: { ok: boolean; version?: string; error?: string; via: "direct" | "kibana" };
   llm: { configured: boolean; model?: string };
   logs: { read: boolean; patterns: string[]; reason?: string };
-  library: { read: boolean; write: boolean; index: string; reason?: string; env?: string };
+  /**
+   * The dashboards library as a whole: read / write = possible in at least one store;
+   * store = where new dashboards are saved. es / server = the details of each store.
+   */
+  library: {
+    read: boolean;
+    write: boolean;
+    index: string;
+    reason?: string;
+    env?: string;
+    store?: "library" | "server" | null;
+    es?: { read: boolean; write: boolean; reason?: string };
+    server?: { write: boolean; reason?: string; dir: string };
+  };
   discover: { enabled: boolean; baseUrl?: string; reason?: string; warning?: string };
   chat: { retentionHours: number };
   admin: { enabled: boolean };

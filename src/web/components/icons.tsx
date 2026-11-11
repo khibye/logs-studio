@@ -128,6 +128,11 @@ export const Icon = {
       <path d="M20 12a8 8 0 0 1-11.7 7.1L4 20l1-4A8 8 0 1 1 20 12z" />
     </Svg>
   ),
+  Play: (p: P) => (
+    <Svg {...p}>
+      <path d="M8 5.5v13l10-6.5z" />
+    </Svg>
+  ),
   Server: (p: P) => (
     <Svg {...p}>
       <rect x="4" y="4" width="16" height="7" rx="2" />
