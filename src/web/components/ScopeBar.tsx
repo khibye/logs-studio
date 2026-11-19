@@ -31,8 +31,11 @@ export function ScopeBar(props: {
   disabled?: boolean;
   /** Show how many log lines the focus matches (default on). */
   showCount?: boolean;
+  /** The environment's own filter (shared cluster): always applied, can't be removed here. */
+  envFilter?: { field: string; values: string[] };
+  envName?: string;
 }) {
-  const { scope, onChange, range, envId, indices, disabled, showCount = true } = props;
+  const { scope, onChange, range, envId, indices, disabled, showCount = true, envFilter, envName } = props;
   const [fields, setFields] = useState<Fields | null>(null);
   const [editing, setEditing] = useState<number | "new" | null>(null);
   const [count, setCount] = useState<{ count?: number; missing?: string[]; error?: string; loading?: boolean } | null>(null);
@@ -82,6 +85,19 @@ export function ScopeBar(props: {
         <span className="scope-label" title="מסננים שנוספים לכל שאילתה של המודל ולכל פאנל">
           מיקוד
         </span>
+        {envFilter && (
+          <span
+            className="scope-chip env"
+            title={`הסביבה ${envName ?? ""} מסוננת תמיד ל-${envFilter.field} = ${envFilter.values.join(", ")}. משנים את זה בהחלפת סביבה.`}
+          >
+            <span className="scope-chip-main" dir="ltr">
+              <Icon.Server size={12} />
+              <span className="scope-field">{shortName(envFilter.field)}</span>
+              <span className="scope-op">=</span>
+              <span className="scope-values">{envFilter.values.join(" | ")}</span>
+            </span>
+          </span>
+        )}
         {scope.map((f, i) => (
           <span key={`${f.field}-${i}`} className={`scope-chip ${f.exclude ? "not" : ""}`}>
             <button

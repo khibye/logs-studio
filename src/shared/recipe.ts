@@ -145,7 +145,8 @@ export type Capabilities = {
   /** When the server was built — tells whether a new version is really deployed. */
   build?: string;
   /** The environment these capabilities describe, and all environments to choose from. */
-  env: { id: string; name: string };
+  /** filter = the environment's own filter on a shared cluster (e.g. namespace = *-stg). */
+  env: { id: string; name: string; filter?: { field: string; values: string[] } };
   environments: { id: string; name: string }[];
   deploys: { enabled: boolean };
   kibanaExport: { enabled: boolean; experimental: true; reason?: string; kibanaVersion?: string };

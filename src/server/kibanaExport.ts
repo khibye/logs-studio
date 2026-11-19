@@ -70,7 +70,8 @@ export async function exportToKibana(recipe: Recipe): Promise<{ url: string; id:
   let rowH = 0;
   for (const raw of recipe.panels) {
     // Kibana has no notion of the focus filters, so they become part of each query.
-    const p = raw.esql ? { ...raw, esql: applyScope(raw.esql, recipe.scope) } : raw;
+    const envFilter = config.elastic.envFilter;
+    const p = raw.esql ? { ...raw, esql: applyScope(raw.esql, [...(envFilter ? [envFilter] : []), ...(recipe.scope ?? [])]) } : raw;
     const cfg = await panelConfig(p);
     if (!cfg) {
       skipped.push(p.title);

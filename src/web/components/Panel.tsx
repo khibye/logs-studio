@@ -4,7 +4,7 @@ import { Chart, numberFmt, type PointInfo, type PrevOverlay } from "./Chart";
 import { Icon } from "./icons";
 import { discoverUrl } from "../../shared/discover";
 import { downloadCsv, toCsv } from "../csv";
-import { applyScope, type Scope } from "../../shared/scope";
+import { applyScope, type Scope, type ScopeFilter } from "../../shared/scope";
 import {
   TIME_RANGES,
   chartCompare,
@@ -161,6 +161,8 @@ export function PanelView(props: {
   comparePrev: boolean;
   annotations?: Annotation[];
   multiEnv: boolean;
+  /** The environment's own filter (shared cluster) — the server adds it; Discover links need it too. */
+  envFilter?: ScopeFilter;
   /** Manual mode: the panel runs only when its run button (or "run all") is pressed. */
   manual?: boolean;
   /** The range / focus selected now (the panel runs with `range` / `scope` until asked). */
@@ -220,7 +222,7 @@ export function PanelView(props: {
   const prev = usePanelData(panel, range, tick, { enabled: active && Boolean(prevKind), compare: prevKind, scope });
   const other = usePanelData(panel, range, tick, { enabled: active && Boolean(compareEnv), env: compareEnv?.id, scope });
   /** The query as it actually runs (with the focus filters) — for Discover. */
-  const runEsql = panel.esql ? applyScope(panel.esql, scope) : undefined;
+  const runEsql = panel.esql ? applyScope(panel.esql, [...(props.envFilter ? [props.envFilter] : []), ...(scope ?? [])]) : undefined;
 
   const sides: Side[] = [{ env: envId, envName, state: main, prev: prevKind ? prev : undefined }];
   if (compareEnv) sides.push({ env: compareEnv.id, envName: compareEnv.name, state: other });

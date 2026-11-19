@@ -684,6 +684,8 @@ export function App() {
                   range={range}
                   envId={envId}
                   indices={context?.indices}
+                  envFilter={caps?.env.filter}
+                  envName={caps?.env.name}
                   disabled={busy}
                 />
               </>

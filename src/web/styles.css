@@ -463,3 +463,7 @@ h4.sub { margin: 4px 0 -2px; font-size: 12.5px; color: var(--muted); font-weight
 @media (prefers-reduced-motion: reduce) { .icon-btn.spinning svg { animation: none; } }
 .run-banner { display: flex; align-items: center; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; padding: 10px 14px; border: 1px solid var(--accent); border-radius: 12px; background: var(--accent-soft); color: var(--accent-dark); font-size: 13px; }
 .btn.run-all { display: inline-flex; align-items: center; gap: 6px; }
+.scope-chip.env { border-color: var(--ink-2); background: var(--surface-2); color: var(--ink); }
+.scope-chip.env .scope-chip-main { cursor: default; padding-right: 10px; }
+.env-values { margin-top: -6px; }
+.sub-help { margin: -4px 0 10px; }

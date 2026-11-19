@@ -330,10 +330,16 @@ export async function runEsql(
     cap?: number;
     /** Focus filters (namespace, pod…) inserted as a WHERE right after FROM. */
     scope?: Scope;
+    /** Skip the environment filter — only for schema lookups (FROM … | LIMIT 0) and admin tools. */
+    noEnvFilter?: boolean;
   } = {},
 ): Promise<QueryResult> {
   const cap = opts.cap ?? config.elastic.maxRows;
-  let guarded = guardEsql(applyScope(query, opts.scope), { trusted: opts.trusted, cap });
+  // The environment's own filter (shared cluster, e.g. namespace = *-stg) comes first and
+  // can't be skipped by the caller; only the app's own queries (deploys, schema) go without it.
+  const envFilter = !opts.trusted && !opts.noEnvFilter ? config.elastic.envFilter : undefined;
+  const scope = envFilter ? [envFilter, ...(opts.scope ?? [])] : opts.scope;
+  let guarded = guardEsql(applyScope(query, scope), { trusted: opts.trusted, cap });
   if (opts.maxRows && opts.maxRows < config.elastic.maxRows) guarded += `\n| LIMIT ${opts.maxRows}`;
 
   const { start, end } = queryWindow(range, opts);

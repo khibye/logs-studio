@@ -70,6 +70,20 @@ export const SETTINGS: SettingDef[] = [
     label: "שדות למיקוד",
     help: "השדות שמוצעים בסרגל המיקוד בצ'אט, מופרד בפסיקים. למשל: kubernetes.namespace, kubernetes.pod.name, service.name. ריק = זיהוי אוטומטי של שדות Kubernetes ושירות נפוצים.",
   },
+  {
+    key: "ENV_FILTER_FIELD",
+    group: "elastic",
+    kind: "string",
+    label: "שדה הסביבה (namespace)",
+    help: "כשכמה סביבות נמצאות על אותו Elastic ונבדלות ב-namespace: שם השדה, למשל kubernetes.namespace. כל סביבה מגדירה את הערכים שלה ב\"ערכי הסביבה\".",
+  },
+  {
+    key: "ENV_FILTER_VALUES",
+    group: "elastic",
+    kind: "list",
+    label: "ערכי הסביבה",
+    help: "הערכים של שדה הסביבה שמשתייכים לסביבה הזו, מופרדים בפסיקים. * = כל המשך, למשל *-stg. כל שאילתה בסביבה מסוננת אליהם, ואי אפשר לעקוף את זה. ריק = בלי סינון.",
+  },
   { key: "DASHBOARDS_INDEX", group: "elastic", kind: "string", default: "ai-dashboards", label: "אינדקס הספרייה המשותפת" },
   { key: "MAX_ROWS", group: "elastic", kind: "number", default: "1000", min: 1, label: "מקסימום שורות לשאילתה" },
   {
@@ -214,9 +228,31 @@ export const ENV_FIELDS = [
   "LOG_CONTEXT",
   "DEPLOY_QUERY",
   "SCOPE_FIELDS",
+  "ENV_FILTER_FIELD",
+  "ENV_FILTER_VALUES",
 ] as const;
 /** Left empty in an additional environment → taken from the main environment. */
-export const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT", "DEPLOY_QUERY", "SCOPE_FIELDS"]);
+export const ENV_INHERITED = new Set([
+  "LOG_INDEX_PATTERNS",
+  "TIME_FIELD",
+  "LOG_CONTEXT",
+  "DEPLOY_QUERY",
+  "SCOPE_FIELDS",
+  "ENV_FILTER_FIELD",
+]);
+/**
+ * The connection. An additional environment without its own Elasticsearch / Kibana address
+ * uses the main environment's connection (same cluster, told apart by ENV_FILTER_VALUES).
+ */
+export const CONNECTION_FIELDS = new Set([
+  "ELASTIC_CONNECTION",
+  "ELASTIC_URL",
+  "ELASTIC_API_KEY",
+  "KIBANA_URL",
+  "KIBANA_PUBLIC_URL",
+  "KIBANA_SPACE",
+  "KIBANA_API_KEY",
+]);
 
 export type EnvDef = { id: string; name: string } & Partial<Record<(typeof ENV_FIELDS)[number], string>>;
 
@@ -460,7 +496,9 @@ function normaliseEnvironments(value: string): [string, string | null] {
       if (err) return ["", `${where}: ${def.label}: ${err}`];
       env[f] = def.kind === "url" ? v.replace(/\/+$/, "") : v;
     }
-    if (!env.ELASTIC_URL && !env.KIBANA_URL) return ["", `${where}: צריך כתובת Elasticsearch או Kibana`];
+    // No address of its own = same cluster as the main environment; then it needs its own filter.
+    if (!env.ELASTIC_URL && !env.KIBANA_URL && !env.ENV_FILTER_VALUES)
+      return ["", `${where}: צריך כתובת Elasticsearch או Kibana, או ערכי סביבה (אותו Elastic כמו הראשית, עם namespace אחר)`];
     out.push(env);
   }
   return [out.length ? JSON.stringify(out) : "", null];

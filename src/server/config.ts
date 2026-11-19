@@ -1,7 +1,9 @@
 import "dotenv/config";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { log, setLogFormat, setLogLevel } from "./log";
+import { FIELD_RE, type ScopeFilter } from "../shared/scope";
 import {
+  CONNECTION_FIELDS,
   ENV_INHERITED,
   MAIN_ENV,
   defaultOf,
@@ -48,6 +50,17 @@ function cleanContext(raw: string | undefined): string {
 
 export type Connection = "direct" | "kibana";
 
+function envFilter(field: string | undefined, values: string | undefined): ScopeFilter | undefined {
+  const f = (field ?? "").trim();
+  const vals = list(values).slice(0, 20);
+  if (!f || !vals.length) return undefined;
+  if (!FIELD_RE.test(f)) {
+    log.warn("config.env_filter_invalid_field", { field: f });
+    return undefined;
+  }
+  return { field: f, values: vals };
+}
+
 /** Builds one environment from a getter for its raw settings. */
 function buildEnv(id: string, name: string, v: (key: string) => string | undefined) {
   const esUrl = trimSlash(v("ELASTIC_URL"));
@@ -73,6 +86,11 @@ function buildEnv(id: string, name: string, v: (key: string) => string | undefin
       deployQuery: (v("DEPLOY_QUERY") ?? "").trim(),
       /** Fields offered in the focus bar. Empty = auto-detect common Kubernetes / service fields. */
       scopeFields: list(v("SCOPE_FIELDS")),
+      /**
+       * Environments on a shared cluster: every (non-system) query here is filtered to these
+       * values of this field (e.g. kubernetes.namespace = *-stg). Not something a query can undo.
+       */
+      envFilter: envFilter(v("ENV_FILTER_FIELD"), v("ENV_FILTER_VALUES")),
       // The rest are global (same in every environment).
       dashboardsIndex: rawValue("DASHBOARDS_INDEX") || "ai-dashboards",
       /** Hard cap on rows any query may return. */
@@ -102,10 +120,11 @@ function buildEnvs(): Map<string, EnvConfig> {
   envs.set(MAIN_ENV, buildEnv(MAIN_ENV, rawValue("ENV_NAME") || "ראשית", rawValue));
   for (const def of parseEnvironments(rawValue("ENVIRONMENTS"))) {
     if (def.id === MAIN_ENV || envs.has(def.id)) continue;
+    const sameCluster = !def.ELASTIC_URL && !def.KIBANA_URL;
     const get = (key: string) => {
       const own = def[key as keyof EnvDef];
       if (own) return own;
-      if (ENV_INHERITED.has(key)) return rawValue(key);
+      if (ENV_INHERITED.has(key) || (sameCluster && CONNECTION_FIELDS.has(key))) return rawValue(key);
       return defaultOf(key);
     };
     envs.set(def.id, buildEnv(def.id, def.name, get));

@@ -419,6 +419,7 @@ export function Dashboard(props: {
             range={range}
             tick={tick}
             scope={scope}
+            envFilter={caps?.env.filter}
             pendingRange={pendingRange}
             pendingScope={pendingScope}
             dashboardPending={pending}

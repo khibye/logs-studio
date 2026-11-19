@@ -1,7 +1,8 @@
 import { Router, type NextFunction, type Request, type Response } from "express";
 import { timingSafeEqual, createHash } from "node:crypto";
 import { z } from "zod";
-import { config, rebuildConfig } from "./config";
+import { MAIN_ENV, config, hasEnv, rebuildConfig, withEnv } from "./config";
+import { topValues } from "./schema";
 import { settingsView, storageInfo, updateSettings } from "./settings";
 import { getCapabilities } from "./capabilities";
 import { listAvailableModels, listModels } from "./llm";
@@ -72,6 +73,19 @@ adminRouter.put(
     });
     rebuildConfig();
     res.json({ settings: settingsView(), storage: storageInfo() });
+  }),
+);
+
+/**
+ * Values of the environment field (e.g. the namespaces), without any environment filter —
+ * so the admin can pick each environment's values.
+ */
+adminRouter.post(
+  "/env-values",
+  wrap(async (req, res) => {
+    const body = z.object({ field: z.string().min(1).max(200), env: z.string().max(40).optional() }).parse(req.body);
+    const env = body.env && hasEnv(body.env) ? body.env : MAIN_ENV;
+    res.json(await withEnv(env, () => topValues(body.field, { range: "7d", noEnvFilter: true })));
   }),
 );
 

@@ -23,7 +23,7 @@ export async function logFields(indices?: string[], refresh = false): Promise<Fi
   const ck = `${config.env.id}|${key}`;
   const hit = cache.get(ck);
   if (!refresh && hit && Date.now() - hit.at < TTL_MS) return hit.fields;
-  const res = await runEsql(`FROM ${key} | LIMIT 0`, "24h");
+  const res = await runEsql(`FROM ${key} | LIMIT 0`, "24h", { noEnvFilter: true });
   const fields = res.columns.map((c) => ({ name: c.name, type: c.type })).sort((a, b) => a.name.localeCompare(b.name));
   if (cache.size > 200) cache.clear();
   cache.set(ck, { at: Date.now(), key, fields });
@@ -77,7 +77,7 @@ const VALUE_TYPES = new Set(["keyword", "ip", "long", "integer", "short", "byte"
 /** Most common values of a field (for the focus bar's suggestions), narrowed by the rest of the scope. */
 export async function topValues(
   field: string,
-  opts: { q?: string; range: TimeRangeKey; scope?: Scope; indices?: string[]; signal?: AbortSignal },
+  opts: { q?: string; range: TimeRangeKey; scope?: Scope; indices?: string[]; signal?: AbortSignal; noEnvFilter?: boolean },
 ): Promise<{ values: { value: string; count: number }[]; reason?: string }> {
   if (!FIELD_RE.test(field)) throw new HttpError(400, "Invalid field name");
   const fields = await logFields(opts.indices);
@@ -92,6 +92,7 @@ export async function topValues(
   const res = await runEsql(query, opts.range, {
     signal: opts.signal,
     scope: (opts.scope ?? []).filter((s) => s.field !== field),
+    noEnvFilter: opts.noEnvFilter,
   });
   const vi = res.columns.findIndex((c) => c.name === field);
   const ci = res.columns.findIndex((c) => c.name === "count");

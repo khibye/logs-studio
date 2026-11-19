@@ -34,8 +34,12 @@ function writePw(pw: string) {
 const ENV_MAIN_FIELDS = ["ELASTIC_URL", "ELASTIC_API_KEY", "KIBANA_URL", "KIBANA_SPACE"];
 const ENV_DATA_FIELDS = ["LOG_INDEX_PATTERNS", "LOG_CONTEXT", "SCOPE_FIELDS", "DEPLOY_QUERY"];
 const ENV_ADVANCED_FIELDS = ["ELASTIC_CONNECTION", "KIBANA_PUBLIC_URL", "KIBANA_API_KEY", "TIME_FIELD"];
-const ENV_FIELDS = [...ENV_MAIN_FIELDS, ...ENV_DATA_FIELDS, ...ENV_ADVANCED_FIELDS];
-const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT", "DEPLOY_QUERY", "SCOPE_FIELDS"]);
+/** Environments on one shared cluster, told apart by a field (e.g. kubernetes.namespace). */
+const ENV_FILTER_FIELDS = ["ENV_FILTER_FIELD", "ENV_FILTER_VALUES"];
+const ENV_FIELDS = [...ENV_MAIN_FIELDS, ...ENV_DATA_FIELDS, ...ENV_ADVANCED_FIELDS, ...ENV_FILTER_FIELDS];
+const ENV_INHERITED = new Set(["LOG_INDEX_PATTERNS", "TIME_FIELD", "LOG_CONTEXT", "DEPLOY_QUERY", "SCOPE_FIELDS", "ENV_FILTER_FIELD"]);
+/** Left empty in an additional environment → the main environment's connection (same cluster). */
+const CONNECTION_FIELDS = new Set(["ELASTIC_CONNECTION", "ELASTIC_URL", "ELASTIC_API_KEY", "KIBANA_URL", "KIBANA_PUBLIC_URL", "KIBANA_SPACE", "KIBANA_API_KEY"]);
 
 const LLM_FIELDS = ["LLM_BASE_URL", "LLM_API_KEY", "LLM_MODEL", "LLM_MODELS"];
 const LLM_ADVANCED = ["LLM_STREAM", "LLM_MAX_STEPS", "LLM_TEMPERATURE"];
@@ -54,6 +58,8 @@ const SHORT: Record<string, { label?: string; help?: string }> = {
   ELASTIC_URL: { help: "ריק = חיבור דרך Kibana. ב-Kibana: תפריט העזרה ← Connection details" },
   LOG_INDEX_PATTERNS: { label: "אינדקסים", help: "מופרד בפסיקים, למשל logs-myapp-*" },
   LOG_CONTEXT: { help: "מה כל שדה אומר, איך מזהים שגיאה, יחידות. המודל מקבל את זה בכל שיחה." },
+  ENV_FILTER_FIELD: { label: "שדה הסביבה", help: "כשכמה סביבות על אותו Elastic: השדה שמבדיל ביניהן, למשל kubernetes.namespace" },
+  ENV_FILTER_VALUES: { label: "ערכי הסביבה", help: "מופרד בפסיקים, * = כל המשך (למשל *-stg). כל שאילתה בסביבה מסוננת אליהם. ריק = בלי סינון" },
   SCOPE_FIELDS: { label: "שדות למיקוד", help: "מוצעים בסרגל המיקוד בצ'אט. ריק = זיהוי אוטומטי (namespace, pod, service…)" },
   DEPLOY_QUERY: { label: "פריסות (ES|QL)", help: "מחזירה עמודת זמן ותיאור, למשל: FROM deploys-* | KEEP @timestamp, service.name, version" },
   ELASTIC_CONNECTION: { help: "auto: ישיר אם יש כתובת Elasticsearch, אחרת דרך Kibana (דורש הרשאת Dev Tools)" },
@@ -234,6 +240,50 @@ function serializeEnvs(envs: EnvObj[]): string {
   );
 }
 
+/** "Show existing values" for an environment's filter values (e.g. the namespaces). */
+function EnvValues(props: { password: string; field: string; value: string; onChange: (v: string) => void }) {
+  const { password, field, value, onChange } = props;
+  const [state, setState] = useState<{ values?: { value: string; count: number }[]; error?: string; loading?: boolean }>({});
+  if (!field) return <div className="f wide env-values muted small">קודם מגדירים את "שדה הסביבה" בסביבה הראשית.</div>;
+  const chosen = value.split(",").map((s) => s.trim()).filter(Boolean);
+  const load = () => {
+    setState({ loading: true });
+    adminApi.envValues(password, field).then(
+      (r) => setState({ values: r.values, error: r.reason }),
+      (e) => setState({ error: e.message }),
+    );
+  };
+  return (
+    <div className="f wide env-values">
+      {!state.values && !state.loading && (
+        <button type="button" className="link-btn" onClick={load}>
+          הצג את הערכים הקיימים של <bdi dir="ltr">{field}</bdi>
+        </button>
+      )}
+      {state.loading && <span className="muted small">טוען…</span>}
+      {state.error && <span className="muted small">{state.error}</span>}
+      {state.values && (
+        <div className="scope-sugg">
+          {state.values.map((v) => (
+            <button
+              key={v.value}
+              type="button"
+              dir="ltr"
+              className={`chip sm ${chosen.includes(v.value) ? "on" : ""}`}
+              onClick={() =>
+                onChange((chosen.includes(v.value) ? chosen.filter((c) => c !== v.value) : [...chosen, v.value]).join(", "))
+              }
+            >
+              {v.value} <span className="muted">{v.count.toLocaleString("he-IL")}</span>
+            </button>
+          ))}
+          {!state.values.length && <span className="muted small">אין ערכים בשבוע האחרון</span>}
+        </div>
+      )}
+    </div>
+  );
+}
+
 function EnvCard(props: {
   title: string;
   subtitle: string;
@@ -284,6 +334,8 @@ const stripSecrets = (e: EnvObj): EnvObj => {
   return c;
 };
 
+const filterLabel = (field?: string, values?: string) =>
+  field?.trim() && values?.trim() ? `${field.trim()} = ${values.split(",").map((s) => s.trim()).filter(Boolean).join(" | ")}` : "";
 const host = (u?: string) => {
   if (!u) return "";
   try {
@@ -575,10 +627,14 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
           ? `${was[f]} · ריק = לא לשנות`
           : f === "KIBANA_API_KEY"
             ? "ריק = אותו מפתח של Elasticsearch"
-            : "לא מוגדר"
+            : !e.ELASTIC_URL && !e.KIBANA_URL
+              ? "ריק = המפתח של הסביבה הראשית"
+              : "לא מוגדר"
         : ENV_INHERITED.has(f)
           ? "ריק = כמו בסביבה הראשית"
-          : s.default;
+          : CONNECTION_FIELDS.has(f) && !e.ELASTIC_URL && !e.KIBANA_URL
+            ? "ריק = אותו Elastic כמו הראשית"
+            : s.default;
     return (
       <Field
         key={f}
@@ -604,7 +660,7 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
       )}
       <EnvCard
         title={draft.ENV_NAME || "ראשית"}
-        subtitle={host(draft.ELASTIC_URL) || host(draft.KIBANA_URL)}
+        subtitle={[host(draft.ELASTIC_URL) || host(draft.KIBANA_URL), filterLabel(draft.ENV_FILTER_FIELD, draft.ENV_FILTER_VALUES)].filter(Boolean).join(" · ")}
         isMain
         open={open.has(MAIN)}
         onToggle={() => toggle(MAIN)}
@@ -617,6 +673,20 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
         </div>
         <h4 className="sub">נתונים</h4>
         <div className="fgrid">{ENV_DATA_FIELDS.map((k) => settingField(k))}</div>
+        <h4 className="sub">כמה סביבות על אותו Elastic</h4>
+        <p className="muted small sub-help">
+          אם stg ו-dev (למשל) נמצאות על אותו Elastic ונבדלות ב-namespace: מגדירים כאן את השדה, ולכל סביבה את הערכים שלה. סביבה נוספת
+          בלי כתובת משתמשת בחיבור של הסביבה הראשית.
+        </p>
+        <div className="fgrid">
+          {ENV_FILTER_FIELDS.map((k) => settingField(k))}
+          <EnvValues
+            password={pw}
+            field={(draft.ENV_FILTER_FIELD ?? "").trim()}
+            value={draft.ENV_FILTER_VALUES ?? ""}
+            onChange={(v) => set("ENV_FILTER_VALUES", v)}
+          />
+        </div>
         <Advanced count={ENV_ADVANCED_FIELDS.length}>{ENV_ADVANCED_FIELDS.map((k) => settingField(k))}</Advanced>
       </EnvCard>
 
@@ -629,7 +699,14 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
           <EnvCard
             key={key}
             title={e.name}
-            subtitle={host(e.ELASTIC_URL) || host(e.KIBANA_URL)}
+            subtitle={
+              [
+                host(e.ELASTIC_URL) || host(e.KIBANA_URL) || (e.ENV_FILTER_VALUES ? "אותו Elastic" : ""),
+                filterLabel(e.ENV_FILTER_FIELD || draft.ENV_FILTER_FIELD, e.ENV_FILTER_VALUES),
+              ]
+                .filter(Boolean)
+                .join(" · ")
+            }
             isMain={false}
             isNew={isNew}
             open={open.has(key) || isNew}
@@ -668,11 +745,21 @@ export function Admin(props: { caps: Capabilities | null; onSaved: () => void })
                   }
                 />
               </div>
+              {extraField(i, "ENV_FILTER_VALUES")}
+              <EnvValues
+                password={pw}
+                field={(e.ENV_FILTER_FIELD || draft.ENV_FILTER_FIELD || "").trim()}
+                value={e.ENV_FILTER_VALUES ?? ""}
+                onChange={(v) => setExtras(extras.map((x, j) => (j === i ? { ...x, ENV_FILTER_VALUES: v } : x)))}
+              />
               {ENV_MAIN_FIELDS.map((f) => extraField(i, f))}
             </div>
             <h4 className="sub">נתונים</h4>
             <div className="fgrid">{ENV_DATA_FIELDS.map((f) => extraField(i, f))}</div>
-            <Advanced count={ENV_ADVANCED_FIELDS.length}>{ENV_ADVANCED_FIELDS.map((f) => extraField(i, f))}</Advanced>
+            <Advanced count={ENV_ADVANCED_FIELDS.length + 1}>
+              {ENV_ADVANCED_FIELDS.map((f) => extraField(i, f))}
+              {extraField(i, "ENV_FILTER_FIELD")}
+            </Advanced>
           </EnvCard>
         );
       })}

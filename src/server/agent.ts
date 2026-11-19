@@ -366,7 +366,7 @@ export async function runAgent(input: {
           break;
         }
         case "get_fields": {
-          const res = await runEsql(`FROM ${args.index_pattern} | LIMIT 0`, range, { signal });
+          const res = await runEsql(`FROM ${args.index_pattern} | LIMIT 0`, range, { signal, noEnvFilter: true });
           const needle = String(args.contains ?? "").toLowerCase();
           const fields = res.columns
             .filter((c) => !needle || c.name.toLowerCase().includes(needle))

@@ -185,6 +185,13 @@ export const adminApi = {
       headers: adminHeaders(password),
       body: JSON.stringify({ values }),
     }),
+  /** Values of the environment field (e.g. namespaces), without any environment filter. */
+  envValues: (password: string, field: string, env?: string) =>
+    call<{ values: { value: string; count: number }[]; reason?: string }>("/api/admin/env-values", {
+      method: "POST",
+      headers: adminHeaders(password),
+      body: JSON.stringify({ field, env }),
+    }),
   test: (password: string) =>
     call<{ capabilities: Capabilities; models: ModelsInfo; available: { models: string[]; error?: string } }>("/api/admin/test", {
       method: "POST",

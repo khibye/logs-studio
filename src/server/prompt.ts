@@ -54,6 +54,15 @@ ${config.environments.length > 1 ? `\nYou are connected to the environment "${co
 - If a query fails, read the error and fix that query — don't start over.
 
 ${
+    config.elastic.envFilter
+      ? `# Environment "${config.env.name}" — filtered AUTOMATICALLY
+This environment shares its cluster with others. Every query is already limited to:
+  ${scopeWhere([config.elastic.envFilter])}
+Don't add it yourself, and don't try to look at other environments: you can't (the filter is enforced).
+
+`
+      : ""
+  }${
     ctx.context?.template || chosen.length || ctx.context?.text
       ? `# Starting point for this conversation${ctx.context?.template ? ` (template "${ctx.context.template.name}")` : ""}
 ${chosen.length ? `- The data is in: ${patterns}. Query FROM ${patterns} (not the wider patterns) unless the user asks about something else.\n` : ""}${
