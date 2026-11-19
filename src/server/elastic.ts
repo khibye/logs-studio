@@ -274,7 +274,12 @@ async function esqlCall(body: Record<string, unknown>, signal?: AbortSignal): Pr
   let res: EsqlResponse;
   try {
     res = await es<EsqlResponse>("/_query/async?format=json", {
-      body: { ...body, wait_for_completion_timeout: wait(), keep_alive: "5m" },
+      // An async query still running when keep_alive ends is cancelled: keep it past our own limit.
+      body: {
+        ...body,
+        wait_for_completion_timeout: wait(),
+        keep_alive: `${Math.max(5, Math.ceil(config.elastic.queryTimeoutMs / 60000) + 2)}m`,
+      },
       signal,
     });
   } catch (err) {

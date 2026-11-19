@@ -71,6 +71,46 @@ const RangeSchema = z.enum(TIME_RANGE_KEYS as [TimeRangeKey, ...TimeRangeKey[]])
 type Handler = (req: Request, res: Response) => Promise<unknown>;
 const route = (fn: Handler) => (req: Request, res: Response, next: NextFunction) => fn(req, res).catch(next);
 
+/**
+ * Answers a slow JSON request without being cut by a proxy / ingress in front of the app
+ * (they usually close a response that stays silent for 60s → HTTP 504 in the browser).
+ * After a few seconds the 200 headers go out and a space is written every 10s — JSON allows
+ * leading whitespace — then the result. An error after that point is sent as
+ * { "__error": message, "__status": code }, which the browser turns back into an error.
+ */
+async function slowJson(res: Response, work: () => Promise<unknown>) {
+  let started = false;
+  const tick = () => {
+    if (res.writableEnded) return;
+    if (!started) {
+      started = true;
+      res.status(200).setHeader("Content-Type", "application/json; charset=utf-8");
+      res.setHeader("X-Accel-Buffering", "no");
+      res.setHeader("Cache-Control", "no-store");
+      res.flushHeaders();
+    }
+    res.write(" ");
+  };
+  const first = setTimeout(() => {
+    tick();
+    timer = setInterval(tick, 10_000);
+  }, 5_000);
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    const value = await work();
+    if (!started) return void res.json(value);
+    res.end(JSON.stringify(value));
+  } catch (err: any) {
+    if (!started) throw err;
+    const status = err instanceof HttpError ? err.status : err instanceof z.ZodError ? 400 : 500;
+    if (status >= 500) log.error("request.failed", { status, error: err?.message });
+    res.end(JSON.stringify({ __error: `${err?.message ?? "Unexpected error"} · req ${requestId()}`, __status: status }));
+  } finally {
+    clearTimeout(first);
+    if (timer) clearInterval(timer);
+  }
+}
+
 async function requireLibrary(mode: "read" | "write") {
   const caps = await getCapabilities();
   const ok = mode === "read" ? caps.library.read : caps.library.write;
@@ -126,14 +166,16 @@ app.post(
     const ctrl = new AbortController();
     res.on("close", () => !res.writableEnded && ctrl.abort());
     const cap = body.export ? Math.max(config.elastic.exportMaxRows, config.elastic.maxRows) : undefined;
-    const result = await runEsql(body.esql, body.time_range, {
-      signal: ctrl.signal,
-      compare: body.compare,
-      cap,
-      scope: body.scope,
+    await slowJson(res, async () => {
+      const result = await runEsql(body.esql, body.time_range, {
+        signal: ctrl.signal,
+        compare: body.compare,
+        cap,
+        scope: body.scope,
+      });
+      if (body.export) log.info("export.csv", { rows: result.values.length, truncated: result.truncated || undefined });
+      return result;
     });
-    if (body.export) log.info("export.csv", { rows: result.values.length, truncated: result.truncated || undefined });
-    res.json(result);
   }),
 );
 

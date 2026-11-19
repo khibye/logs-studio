@@ -64,6 +64,10 @@ async function call<T>(path: string, init?: RequestInit): Promise<T> {
   } catch {
     body = text;
   }
+  // A slow answer that failed after its headers went out (see slowJson on the server).
+  if (res.ok && body && typeof body === "object" && "__error" in body) {
+    throw new ApiError(Number(body.__status) || 500, String(body.__error));
+  }
   if (!res.ok) {
     // The request id matches the server log line for this call (LOG_LEVEL=info or debug).
     const req = res.headers.get("x-request-id");
