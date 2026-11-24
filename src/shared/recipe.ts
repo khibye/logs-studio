@@ -165,6 +165,11 @@ export type ChatEvent =
   | { type: "tool_start"; id: string; name: string; summary: string }
   | { type: "tool_end"; id: string; ok: boolean; summary: string }
   | { type: "recipe"; recipe: Recipe }
+  /**
+   * A panel's result, already run on the server while checking it (same env / range / focus).
+   * The browser shows it instead of running the same query again.
+   */
+  | { type: "panel_data"; env: string; esql: string; range: TimeRangeKey; scope: string; result: QueryResult }
   /** The model proposes a template (starting point); count = matching log lines in the range. */
   | { type: "template"; template: Template; count: number }
   | { type: "error"; message: string }

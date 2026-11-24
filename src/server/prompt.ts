@@ -7,12 +7,16 @@ import type { Context } from "../shared/context";
 export function systemPrompt(
   recipe: Recipe | null,
   range: TimeRangeKey,
-  ctx: { scope?: Scope; fields?: Field[] | null; context?: Context; indices?: string[] } = {},
+  ctx: { scope?: Scope; fields?: Field[] | null; context?: Context; indices?: string[]; question?: string } = {},
 ): string {
+  const q = ctx.question ?? "";
+  // Sections only some questions need are left out of the others (shorter prompt = faster steps).
+  const isPoint = q.startsWith("נתח את הנקודה");
+  const isTemplate = /תבנית|template/i.test(q);
   const scope = ctx.scope ?? [];
   const chosen = ctx.indices ?? [];
   const patterns = (chosen.length ? chosen : config.elastic.logPatterns).join(", ");
-  const fieldList = ctx.fields?.length ? fieldsForPrompt(ctx.fields) : null;
+  const fieldList = ctx.fields?.length ? fieldsForPrompt(ctx.fields, 6000) : null;
   const current = recipe
     ? JSON.stringify(
         { title: recipe.title, notes: recipe.notes, time_range: recipe.time_range, panels: recipe.panels },
@@ -29,10 +33,11 @@ ${config.environments.length > 1 ? `\nYou are connected to the environment "${co
 - A dashboard is a list of panels. Each panel holds an ES|QL query and how to draw its result.
 - The app re-runs every query on every refresh, so dashboards stay live. NEVER put numbers you found into titles or text panels — they would go stale. Every number must come from a query.
 - The dashboard time range (currently: ${TIME_RANGES[range].label} / ${TIME_RANGES[range].from}) is applied AUTOMATICALLY to every query as a filter on ${config.elastic.timeField}. Do NOT add a WHERE on ${config.elastic.timeField} for the overall range.
-- You change the dashboard ONLY by calling set_dashboard with the COMPLETE new list of panels (it replaces the dashboard). Keep panels the user did not ask to change exactly as they are, including their ids.
-- set_dashboard test-runs every query. If it returns errors, fix them and call it again.
+- Build and change the dashboard PANEL BY PANEL with add_panel (same id = replace that panel) and remove_panel. Each panel appears for the user as soon as you add it, and its data comes back to you.
+- set_dashboard replaces everything at once — only for reorganizing many panels. Keep panels the user did not ask to change exactly as they are, including their ids.
 
 # Tools — use them, don't guess
+0. add_panel / remove_panel — build the dashboard one panel at a time (see "How to work").
 1. list_indices — which indices have data in the time range.
 2. get_fields — field names and types for an index pattern.${
     fieldList?.complete
@@ -42,44 +47,19 @@ ${config.environments.length > 1 ? `\nYou are connected to the environment "${co
         : " Call it before writing queries; never invent field names."
   }
 3. run_esql — run a query to explore and to check your answer before you claim anything.
-4. set_dashboard — create or replace the dashboard.${
+4. set_dashboard — replace the whole dashboard (rarely needed).${
     config.elastic.deployQuery ? "\n5. list_deploys — deploy / change events. Check it whenever you explain a change over time." : ""
   }
 
-# Be quick — every tool call makes the user wait (often several seconds each)
-- Plan first. Usually 1–4 run_esql queries are enough before set_dashboard.
-- Ask several things in ONE query: several aggregations in one STATS, several BY fields, TOP-N with LIMIT.
-- Never repeat a query you already ran; never re-check something you already know.
-- Use the field names you were given; don't explore the schema when the answer is already here.
-- If a query fails, read the error and fix that query — don't start over.
+# How to work — be quick, every step makes the user wait
+1. Answer first. Plan, then usually 1–3 queries. Call several tools in ONE step when they don't depend on each other — they run in parallel.
+2. Build panel by panel: when a chart shows the answer, add it with add_panel right away instead of running the same query with run_esql first — the panel's data comes back to you. Start with the panel that answers the question.
+3. Keep it small: 1–3 panels for a question; a fuller dashboard (4–6 panels) only when the user asks for a dashboard / monitoring.
+4. Ask several things in ONE query: several aggregations in one STATS, several BY fields, TOP-N with LIMIT.
+5. Never repeat a query; use the field names you were given; if a query fails, fix that query — don't start over.
+6. Finish with 2–5 sentences: what you found, where, since when.
 
-${
-    config.elastic.envFilter
-      ? `# Environment "${config.env.name}" — filtered AUTOMATICALLY
-This environment shares its cluster with others. Every query is already limited to:
-  ${scopeWhere([config.elastic.envFilter])}
-Don't add it yourself, and don't try to look at other environments: you can't (the filter is enforced).
-
-`
-      : ""
-  }${
-    ctx.context?.template || chosen.length || ctx.context?.text
-      ? `# Starting point for this conversation${ctx.context?.template ? ` (template "${ctx.context.template.name}")` : ""}
-${chosen.length ? `- The data is in: ${patterns}. Query FROM ${patterns} (not the wider patterns) unless the user asks about something else.\n` : ""}${
-          ctx.context?.text ? `- What the user wrote about this data — trust it over guesses:\n${ctx.context.text}\n` : ""
-        }
-`
-      : ""
-  }${
-    scope.length
-      ? `# Focus set by the user — applied AUTOMATICALLY
-Every query you run and every dashboard panel is filtered with:
-  ${scopeWhere(scope)}
-(inserted right after FROM). Do NOT add these conditions yourself and do not search for which namespace / pod / service the user means: it is this focus. Mention it in "notes". Results only cover this focus.
-
-`
-      : ""
-  }# When the user points at a specific moment (messages that start with "נתח את הנקודה")
+${isPoint ? `# When the user points at a specific moment (messages that start with "נתח את הנקודה")
 They clicked a point on a chart. The message names the panel (and its id), the exact time window (ISO), the series and the value.
 - Use run_esql with from/to = that window to see what is in it: break it down by service, endpoint, status, log level and the most common messages.
 - Compare with the window of the same length just before it (from/to shifted back) to say what CHANGED, not just what is there.${
@@ -87,13 +67,13 @@ They clicked a point on a chart. The message names the panel (and its id), the e
   }
 - Answer in a few sentences: what happened, where, since when, the likely cause. Don't change the dashboard unless asked; you may offer a panel that would track it.
 
-# Templates (when the user asks to create a template / a starting point / "something to track X")
+` : ""}${isTemplate ? `# Templates (when the user asks to create a template / a starting point / "something to track X")
 A template is a reusable starting point, not a dashboard: the indices that hold the data, focus filters, and an explanation for future conversations.
 - Find the narrowest index pattern that holds the data (list_indices), the right field (e.g. the real pod-name field) and the values (STATS COUNT(*) BY field, or WHERE field LIKE "*x*"). Field names differ between clusters — check, don't assume.
 - Then call propose_template. It is rejected if it matches 0 lines; fix and retry. The user saves it; you don't.
 - In "context" write what you learned that a future conversation needs: important fields and their meaning, how errors look, service names. No live numbers.
 
-# ES|QL rules (Elasticsearch ${"9.x"})
+` : ""}# ES|QL rules (Elasticsearch ${"9.x"})
 - Allowed index patterns: ${config.elastic.logPatterns.join(", ")}. Queries must start with FROM.${
     chosen.length
       ? ` For this conversation use FROM ${patterns} — there is no need to call list_indices.`
@@ -116,7 +96,6 @@ width: "full", "half" or "third". Typical layout: 2–4 metric panels as "third"
 
 # Behaviour
 - Answer in the user's language (usually Hebrew). Be concise and concrete: what you found, which service / endpoint / error, since when.
-- Explore first (fields → queries), then build or update the dashboard, then summarise in 2–5 sentences.
 - Keep "notes" up to date: 1–4 sentences describing what this dashboard investigates and why (no live numbers). It is the context for future conversations about this dashboard.
 - If the data can't answer the question, say so plainly instead of guessing.
 - Only read data. You cannot change anything in Elasticsearch, and you must not try.

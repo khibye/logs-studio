@@ -41,6 +41,11 @@ const SUGGESTIONS_NEW = [
 ];
 const SUGGESTIONS_EXISTING = ["הסבר מה רואים בדשבורד הזה", "השווה לטווח זמן ארוך יותר", "הוסף פילוח לפי שירות"];
 
+const WIDTH_KEY = "logs-studio:chat-width";
+const DEFAULT_WIDTH = 380;
+const MIN_WIDTH = 300;
+const clampWidth = (w: number) => Math.round(Math.max(MIN_WIDTH, Math.min(w, window.innerWidth * 0.7)));
+
 export function Chat(props: {
   messages: UiMessage[];
   busy: boolean;
@@ -90,10 +95,72 @@ export function Chat(props: {
     }
   };
 
+  // ---- Resizable width (wide screens), remembered in this browser ----
+  const asideRef = useRef<HTMLElement>(null);
+  const [width, setWidth] = useState<number | null>(() => {
+    try {
+      const v = Number(localStorage.getItem(WIDTH_KEY));
+      return v >= MIN_WIDTH ? v : null;
+    } catch {
+      return null;
+    }
+  });
+  const saveWidth = (w: number | null) => {
+    setWidth(w);
+    try {
+      if (w) localStorage.setItem(WIDTH_KEY, String(Math.round(w)));
+      else localStorage.removeItem(WIDTH_KEY);
+    } catch {}
+  };
+  const startResize = (e: React.PointerEvent<HTMLDivElement>) => {
+    const aside = asideRef.current;
+    if (!aside || e.button !== 0) return;
+    e.preventDefault();
+    const rect = aside.getBoundingClientRect();
+    const rtl = getComputedStyle(aside).direction === "rtl";
+    const handle = e.currentTarget;
+    handle.setPointerCapture(e.pointerId);
+    document.body.classList.add("resizing");
+    let last = width;
+    const move = (ev: PointerEvent) => {
+      last = clampWidth(rtl ? rect.right - ev.clientX : ev.clientX - rect.left);
+      setWidth(last);
+    };
+    const up = () => {
+      handle.removeEventListener("pointermove", move);
+      handle.removeEventListener("pointerup", up);
+      handle.removeEventListener("pointercancel", up);
+      document.body.classList.remove("resizing");
+      saveWidth(last);
+    };
+    handle.addEventListener("pointermove", move);
+    handle.addEventListener("pointerup", up);
+    handle.addEventListener("pointercancel", up);
+  };
+
   const suggestions = props.suggestions?.length ? props.suggestions : hasDashboard ? SUGGESTIONS_EXISTING : SUGGESTIONS_NEW;
 
   return (
-    <aside className="chat" aria-label="שיחה עם המודל">
+    <aside className="chat" aria-label="שיחה עם המודל" ref={asideRef} style={width ? { flex: `0 0 ${width}px`, maxWidth: "none" } : undefined}>
+      <div
+        className="chat-resize"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label="רוחב השיחה (גרירה, או חיצים במקלדת; לחיצה כפולה מחזירה לברירת מחדל)"
+        aria-valuenow={width ?? DEFAULT_WIDTH}
+        aria-valuemin={MIN_WIDTH}
+        tabIndex={0}
+        title="גררי כדי לשנות את רוחב השיחה · לחיצה כפולה מחזירה לרוחב הרגיל"
+        onPointerDown={startResize}
+        onDoubleClick={() => saveWidth(null)}
+        onKeyDown={(e) => {
+          if (e.key !== "ArrowLeft" && e.key !== "ArrowRight") return;
+          e.preventDefault();
+          const rtl = getComputedStyle(asideRef.current!).direction === "rtl";
+          const grow = (e.key === "ArrowLeft") === rtl;
+          saveWidth(clampWidth((width ?? asideRef.current!.getBoundingClientRect().width) + (grow ? 32 : -32)));
+        }}
+      />
       <div className="chat-head">
         <div>
           <div className="chat-title">שיחה</div>

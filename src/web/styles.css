@@ -467,3 +467,11 @@ h4.sub { margin: 4px 0 -2px; font-size: 12.5px; color: var(--muted); font-weight
 .scope-chip.env .scope-chip-main { cursor: default; padding-right: 10px; }
 .env-values { margin-top: -6px; }
 .sub-help { margin: -4px 0 10px; }
+/* Chat width handle (on the chat's inner edge) */
+.chat { position: sticky; }
+.chat-resize { position: absolute; top: 0; bottom: 0; inset-inline-end: -4px; width: 8px; cursor: col-resize; z-index: 5; touch-action: none; }
+.chat-resize::after { content: ""; position: absolute; top: 0; bottom: 0; inset-inline-start: 3px; width: 2px; background: transparent; transition: background .15s; }
+.chat-resize:hover::after, .chat-resize:focus-visible::after, body.resizing .chat-resize::after { background: var(--accent); }
+.chat-resize:focus-visible { outline: none; }
+body.resizing { cursor: col-resize; user-select: none; }
+@media (max-width: 960px) { .chat-resize { display: none; } .chat[style] { flex: 1 1 340px !important; } }

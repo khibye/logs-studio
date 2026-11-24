@@ -8,7 +8,7 @@ import type { RecentItem } from "../share";
 import { TIME_RANGES, type Annotation, type Capabilities, type DashboardSummary, type Recipe, type TimeRangeKey } from "../../shared/recipe";
 import type { Scope } from "../../shared/scope";
 
-const PREV_KEY = "logs-studio:compare-prev";
+const PREV_KEY = "logs-studio:compare-prev-charts";
 const DEPLOYS_KEY = "logs-studio:show-deploys";
 const MANUAL_KEY = "logs-studio:manual-run";
 function readFlag(key: string, fallback: boolean): boolean {
@@ -134,7 +134,7 @@ export function Dashboard(props: {
   const envId = caps?.env.id;
 
   // ---- View options (per browser; not part of the dashboard) ----
-  const [comparePrev, setComparePrev] = useState(() => readFlag(PREV_KEY, true));
+  const [comparePrev, setComparePrev] = useState(() => readFlag(PREV_KEY, false));
   const [showDeploys, setShowDeploys] = useState(() => readFlag(DEPLOYS_KEY, true));
   /** Panels run only when asked (heavy dashboards / slow clusters). */
   const [manual, setManual] = useState(() => readFlag(MANUAL_KEY, false));
@@ -367,9 +367,13 @@ export function Dashboard(props: {
             setComparePrev(v);
             writeFlag(PREV_KEY, v);
           }}
-          title={compareEnv ? "כבוי בזמן השוואה בין סביבות" : undefined}
+          title={
+            compareEnv
+              ? "כבוי בזמן השוואה בין סביבות"
+              : "קו מקווקו של התקופה הקודמת בגרפים (מריץ כל גרף פעמיים). המדדים תמיד מציגים שינוי מהתקופה הקודמת."
+          }
         >
-          השוואה לתקופה קודמת
+          השוואה לתקופה קודמת בגרפים
         </Toggle>
         <Toggle
           on={manual}

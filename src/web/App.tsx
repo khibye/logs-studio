@@ -6,6 +6,7 @@ import { Dashboard, type Origin } from "./components/Dashboard";
 import { Library } from "./components/Library";
 import { Admin } from "./components/Admin";
 import { ScopeBar } from "./components/ScopeBar";
+import { putPanelData } from "./prefetch";
 import { ContextLine, TemplateEditor, TemplatePicker, TemplatesSection, emptyTemplate } from "./components/Templates";
 import type { Scope } from "../shared/scope";
 import { contextFromTemplate, type Template } from "../shared/template";
@@ -442,6 +443,9 @@ export function App() {
               setRange(ev.recipe.time_range);
               // A dashboard the model just built runs right away.
               setApplied({ range: ev.recipe.time_range, scope: scopeRef.current });
+              break;
+            case "panel_data":
+              putPanelData(ev.env, ev.esql, ev.range, ev.scope, ev.result);
               break;
             case "template":
               patch((m) => ({ ...m, proposals: [...(m.proposals ?? []), { template: ev.template, count: ev.count }] }));

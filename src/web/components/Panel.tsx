@@ -4,6 +4,7 @@ import { Chart, numberFmt, type PointInfo, type PrevOverlay } from "./Chart";
 import { Icon } from "./icons";
 import { discoverUrl } from "../../shared/discover";
 import { downloadCsv, toCsv } from "../csv";
+import { takePanelData } from "../prefetch";
 import { applyScope, type Scope, type ScopeFilter } from "../../shared/scope";
 import {
   TIME_RANGES,
@@ -23,7 +24,7 @@ function usePanelData(
   panel: Panel,
   range: TimeRangeKey,
   tick: number,
-  opts: { enabled: boolean; env?: string; compare?: Compare; scope?: Scope },
+  opts: { enabled: boolean; env?: string; compare?: Compare; scope?: Scope; currentEnv?: string },
 ): State {
   const scopeKey = JSON.stringify(opts.scope ?? []);
   const [state, setState] = useState<State>({ loading: opts.enabled && panel.type !== "text" });
@@ -31,6 +32,14 @@ function usePanelData(
     if (!opts.enabled || panel.type === "text" || !panel.esql) {
       setState({ loading: false });
       return;
+    }
+    // Already run on the server while the model added the panel? Use that once.
+    if (!opts.compare && !opts.env && opts.currentEnv) {
+      const ready = takePanelData(opts.currentEnv, panel.esql, range, scopeKey);
+      if (ready) {
+        setState({ data: ready, loading: false });
+        return;
+      }
     }
     const ctrl = new AbortController();
     setState((s) => ({ ...s, loading: true }));
@@ -216,9 +225,17 @@ export function PanelView(props: {
 
   const isChart = ["line", "area", "bar", "hbar"].includes(panel.type);
   const prevKind: Compare | undefined =
-    !comparePrev || compareEnv ? undefined : panel.type === "metric" ? "previous" : panel.type === "line" || panel.type === "area" ? chartCompare(range) : undefined;
+    // Metrics always show the change from the previous period (one cheap number); charts only
+    // when "compare with previous period" is on, since it doubles their queries.
+    compareEnv
+      ? undefined
+      : panel.type === "metric"
+        ? "previous"
+        : comparePrev && (panel.type === "line" || panel.type === "area")
+          ? chartCompare(range)
+          : undefined;
 
-  const main = usePanelData(panel, range, tick, { enabled: active, scope });
+  const main = usePanelData(panel, range, tick, { enabled: active, scope, currentEnv: envId });
   const prev = usePanelData(panel, range, tick, { enabled: active && Boolean(prevKind), compare: prevKind, scope });
   const other = usePanelData(panel, range, tick, { enabled: active && Boolean(compareEnv), env: compareEnv?.id, scope });
   /** The query as it actually runs (with the focus filters) — for Discover. */

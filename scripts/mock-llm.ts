@@ -1,8 +1,9 @@
 /**
  * A scripted fake of an OpenAI-compatible /v1/chat/completions endpoint, for
  * exercising the agent loop without a real model. It walks a fixed script:
- *   user message → get_fields → run_esql → set_dashboard (first attempt has an
- *   error on purpose, to test the fix-up loop) → set_dashboard → final answer.
+ *   user message → two run_esql in parallel → three add_panel in one step (one has an
+ *   error on purpose, to test the fix-up loop) → add_panel (fixed) → final answer.
+ *   "דשבורד מלא" in the message → the older set_dashboard script.
  * Supports stream: true (SSE) and stream: false.   MOCK_LLM_PORT=4010
  */
 import express from "express";
@@ -60,7 +61,38 @@ function focusStep(messages: any[], tools: any[]) {
   return { text: `בחלון שבחרת רוב השגיאות מגיעות מ-\`checkout-api\`.${hasDeploys ? " דקות לפני כן הייתה פריסה של checkout-api v3.8.0, שהיא כנראה הסיבה." : ""}` };
 }
 
-function nextStep(messages: any[]) {
+type Step = { text?: string; tool?: { name: string; args: any }; tools?: { name: string; args: any }[] };
+
+/** Panel by panel: answer-first queries, then add_panel calls. */
+function panelStep(messages: any[]): Step {
+  const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
+  const tools = messages.slice(lastUserIdx + 1).filter((m) => m.role === "tool");
+  const n = tools.length;
+  const d = dashboard(false).panels;
+  const byId = (id: string) => d.find((p) => p.id === id)!;
+  if (n === 0)
+    return {
+      text: "בודקת איפה השגיאות ומתי. ",
+      tools: [
+        { name: "run_esql", args: { query: "FROM logs-* | WHERE http.response.status_code >= 500 | STATS errors = COUNT(*) BY service.name | SORT errors DESC" } },
+        { name: "run_esql", args: { query: "FROM logs-* | WHERE http.response.status_code >= 500 | STATS errors = COUNT(*) BY url.path | SORT errors DESC | LIMIT 5" } },
+      ],
+    };
+  if (n === 2)
+    return {
+      tools: [
+        { name: "add_panel", args: { dashboard_title: "שגיאות 5xx לפי שירות", notes: dashboard(false).notes, panel: byId("total") } },
+        { name: "add_panel", args: { panel: { ...byId("over-time"), y: ["error_count"] } } },
+        { name: "add_panel", args: { panel: byId("top-paths") } },
+      ],
+    };
+  if (n === 5 && tools.some((t) => String(t.content).includes('"ok":false'))) return { tool: { name: "add_panel", args: { panel: byId("over-time") } } };
+  return {
+    text: "רוב שגיאות ה-5xx מגיעות מ-`checkout-api`, בעיקר ב-`/api/checkout`, עם עלייה חדה לפני כמה שעות. הוספתי שלושה פאנלים: סך השגיאות, השגיאות לאורך זמן לפי שירות, וה-endpoints המובילים.",
+  };
+}
+
+function nextStep(messages: any[]): Step {
   const toolMsgs = messages.filter((m) => m.role === "tool");
   const lastUserIdx = messages.map((m) => m.role).lastIndexOf("user");
   const sinceUser = messages.slice(lastUserIdx + 1).filter((m) => m.role === "tool");
@@ -102,22 +134,24 @@ let callNo = 0;
 app.post("/v1/chat/completions", async (req, res) => {
   const msgs = req.body.messages ?? [];
   const lastUser = String(msgs[msgs.map((m: any) => m.role).lastIndexOf("user")]?.content ?? "");
-  const step: { text?: string; tool?: { name: string; args: any } } = lastUser.startsWith("נתח את הנקודה")
+  const step: Step = lastUser.startsWith("נתח את הנקודה")
     ? focusStep(msgs, req.body.tools ?? [])
     : lastUser.includes("תבנית")
       ? templateStep(msgs)
-      : nextStep(msgs);
-  if (!step.tool && step.text) step.text += ` (ענה: ${req.body.model})`;
+      : lastUser.includes("דשבורד מלא")
+        ? nextStep(msgs)
+        : panelStep(msgs);
+  const calls = step.tools ?? (step.tool ? [step.tool] : []);
+  if (!calls.length && step.text) step.text += ` (ענה: ${req.body.model})`;
   const id = `chatcmpl-${++callNo}`;
-  const toolCall = step.tool
-    ? { id: `call_${callNo}`, type: "function", function: { name: step.tool.name, arguments: JSON.stringify(step.tool.args) } }
-    : null;
+  const toolCalls = calls.map((t, i) => ({ id: `call_${callNo}_${i}`, type: "function", function: { name: t.name, arguments: JSON.stringify(t.args) } }));
+  const toolCall = toolCalls[0] ?? null;
 
   if (!req.body.stream) {
     return res.json({
       id,
       object: "chat.completion",
-      choices: [{ index: 0, finish_reason: toolCall ? "tool_calls" : "stop", message: { role: "assistant", content: step.text ?? null, tool_calls: toolCall ? [toolCall] : undefined } }],
+      choices: [{ index: 0, finish_reason: toolCall ? "tool_calls" : "stop", message: { role: "assistant", content: step.text ?? null, tool_calls: toolCalls.length ? toolCalls : undefined } }],
     });
   }
   res.setHeader("Content-Type", "text/event-stream");
@@ -130,10 +164,10 @@ app.post("/v1/chat/completions", async (req, res) => {
     send({ content: word });
     await sleep(15);
   }
-  if (toolCall) {
-    const args = toolCall.function.arguments;
-    send({ tool_calls: [{ index: 0, id: toolCall.id, type: "function", function: { name: toolCall.function.name, arguments: "" } }] });
-    for (let i = 0; i < args.length; i += 80) send({ tool_calls: [{ index: 0, function: { arguments: args.slice(i, i + 80) } }] });
+  for (const [index, tc] of toolCalls.entries()) {
+    const args = tc.function.arguments;
+    send({ tool_calls: [{ index, id: tc.id, type: "function", function: { name: tc.function.name, arguments: "" } }] });
+    for (let i = 0; i < args.length; i += 80) send({ tool_calls: [{ index, function: { arguments: args.slice(i, i + 80) } }] });
   }
   send({}, toolCall ? "tool_calls" : "stop");
   res.write("data: [DONE]\n\n");

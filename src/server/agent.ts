@@ -32,6 +32,25 @@ const NUMERIC = new Set([
   "counter_long", "counter_double", "counter_integer",
 ]);
 
+/** JSON schema of one panel, shared by add_panel and set_dashboard. */
+const PANEL_JSON = {
+  type: "object",
+  properties: {
+    id: { type: "string", description: "Keep existing ids unchanged; new panels: short slug" },
+    title: { type: "string" },
+    type: { type: "string", enum: [...PANEL_TYPES] },
+    esql: { type: "string", description: "Required for all types except text" },
+    text: { type: "string", description: "Only for text panels" },
+    x: { type: "string", description: "Result column for x / category" },
+    y: { type: "array", items: { type: "string" }, description: "Value column(s). metric uses y[0]" },
+    series: { type: "string", description: "Optional breakdown column" },
+    unit: { type: "string", description: "Optional unit suffix, e.g. ms or %" },
+    width: { type: "string", enum: ["full", "half", "third"] },
+    description: { type: "string" },
+  },
+  required: ["title", "type", "width"],
+} as const;
+
 const ALL_TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
@@ -78,9 +97,40 @@ const ALL_TOOLS: ChatCompletionTool[] = [
   {
     type: "function",
     function: {
+      name: "add_panel",
+      description:
+        "Add ONE panel to the dashboard, or replace the panel with the same id. The query runs right away: the panel appears for the user immediately and its data comes back to you (so a panel is also a query — no need to run it separately first). Creates the dashboard if there is none yet. Errors are returned so you can fix them.",
+      parameters: {
+        type: "object",
+        properties: {
+          panel: PANEL_JSON,
+          dashboard_title: { type: "string", description: "Only when creating the dashboard, or to rename it" },
+          notes: { type: "string", description: "Optional: 1-4 sentences on what the dashboard investigates. No live numbers." },
+        },
+        required: ["panel"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "remove_panel",
+      description: "Remove one panel from the dashboard by id.",
+      parameters: {
+        type: "object",
+        properties: { id: { type: "string" } },
+        required: ["id"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
       name: "set_dashboard",
       description:
-        "Create or REPLACE the whole dashboard. Send every panel that should remain. Each query is test-run; errors are returned so you can fix them.",
+        "REPLACE the whole dashboard at once (send every panel that should remain). Only for reorganizing — reordering or changing many panels. To add or change one panel, use add_panel. Each query is test-run; errors are returned so you can fix them.",
       parameters: {
         type: "object",
         properties: {
@@ -89,23 +139,7 @@ const ALL_TOOLS: ChatCompletionTool[] = [
           time_range: { type: "string", enum: TIME_RANGE_KEYS, description: "Default time range for the dashboard" },
           panels: {
             type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: { type: "string", description: "Keep existing ids unchanged; new panels: short slug" },
-                title: { type: "string" },
-                type: { type: "string", enum: [...PANEL_TYPES] },
-                esql: { type: "string", description: "Required for all types except text" },
-                text: { type: "string", description: "Only for text panels" },
-                x: { type: "string", description: "Result column for x / category" },
-                y: { type: "array", items: { type: "string" }, description: "Value column(s). metric uses y[0]" },
-                series: { type: "string", description: "Optional breakdown column" },
-                unit: { type: "string", description: "Optional unit suffix, e.g. ms or %" },
-                width: { type: "string", enum: ["full", "half", "third"] },
-                description: { type: "string" },
-              },
-              required: ["title", "type", "width"],
-            },
+            items: PANEL_JSON,
           },
         },
         required: ["title", "notes", "panels"],
@@ -158,28 +192,12 @@ async function validateDashboard(
   });
   if (errors.length) return { errors };
 
-  const checks = await Promise.all(
-    panels.map(async (p) => {
-      if (p.type === "text") return null;
-      try {
-        const res = await runEsql(p.esql!, range, { signal, maxRows: 50, scope });
-        const types = new Map(res.columns.map((c) => [c.name, c.type]));
-        const problems: string[] = [];
-        for (const col of [p.x, ...(p.y ?? []), p.series].filter(Boolean) as string[]) {
-          if (!types.has(col)) problems.push(`column "${col}" is not in the result (columns: ${[...types.keys()].join(", ")})`);
-        }
-        for (const col of p.y ?? []) {
-          const t = types.get(col);
-          if (t && !NUMERIC.has(t) && p.type !== "table") problems.push(`value column "${col}" is ${t}, it must be numeric`);
-        }
-        if (p.type === "metric" && res.values.length === 0) problems.push("metric query returned no rows");
-        return problems.length ? `panel "${p.title}": ${problems.join("; ")}` : null;
-      } catch (err: any) {
-        return `panel "${p.title}": query failed — ${err.message}`;
-      }
-    }),
-  );
-  for (const c of checks) if (c) errors.push(c);
+  const checks = await Promise.all(panels.map((p) => checkPanel(p, range, scope, signal)));
+  const results = new Map<string, QueryResult>();
+  checks.forEach((c, i) => {
+    if (c.problem) errors.push(c.problem);
+    else if (c.result) results.set(panels[i].id, c.result);
+  });
   if (errors.length) return { errors };
 
   const recipe = RecipeSchema.parse({
@@ -191,10 +209,43 @@ async function validateDashboard(
     context: context ?? draft?.context,
     panels,
   });
-  return { recipe };
+  return { recipe, results };
+}
+
+/**
+ * Runs a panel's query exactly as the dashboard will (same range, focus, row cap), and checks
+ * that the columns it names exist. The result is sent to the browser with the dashboard, so
+ * the panel doesn't run the same query again.
+ */
+async function checkPanel(
+  p: Panel,
+  range: TimeRangeKey,
+  scope: Scope,
+  signal: AbortSignal,
+): Promise<{ problem?: string; result?: QueryResult }> {
+  if (p.type === "text") return {};
+  try {
+    const res = await runEsql(p.esql!, range, { signal, scope });
+    const types = new Map(res.columns.map((c) => [c.name, c.type]));
+    const problems: string[] = [];
+    for (const col of [p.x, ...(p.y ?? []), p.series].filter(Boolean) as string[]) {
+      if (!types.has(col)) problems.push(`column "${col}" is not in the result (columns: ${[...types.keys()].join(", ")})`);
+    }
+    for (const col of p.y ?? []) {
+      const t = types.get(col);
+      if (t && !NUMERIC.has(t) && p.type !== "table") problems.push(`value column "${col}" is ${t}, it must be numeric`);
+    }
+    if (p.type === "metric" && res.values.length === 0) problems.push("metric query returned no rows");
+    return problems.length ? { problem: `panel "${p.title}": ${problems.join("; ")}` } : { result: res };
+  } catch (err: any) {
+    return { problem: `panel "${p.title}": query failed — ${err.message}` };
+  }
 }
 
 type ToolCall = { id: string; name: string; arguments: string };
+
+/** Tools that change the dashboard: run one at a time, in order. The rest run in parallel. */
+const MUTATING = new Set(["add_panel", "remove_panel", "set_dashboard", "propose_template"]);
 
 /** Optional explicit window from tool arguments (ISO strings). */
 function windowArg(args: any): { from: number; to: number } | undefined {
@@ -276,6 +327,10 @@ function toolSummary(name: string, args: any): string {
       return `list_deploys${args?.from ? " (window)" : ""}`;
     case "set_dashboard":
       return `set_dashboard · ${Array.isArray(args?.panels) ? args.panels.length : 0} panels`;
+    case "add_panel":
+      return `add_panel · ${args?.panel?.title ?? ""}`;
+    case "remove_panel":
+      return `remove_panel · ${args?.id ?? ""}`;
     case "propose_template":
       return `propose_template · ${args?.name ?? ""}`;
     default:
@@ -320,10 +375,42 @@ export async function runAgent(input: {
   });
 
   let draft = input.recipe;
+  const scopeKey = JSON.stringify(scope);
+  /** Hands a panel's result to the browser so it doesn't run the query again. */
+  const emitData = (esql: string, result: QueryResult) =>
+    emit({ type: "panel_data", env: config.env.id, esql, range: draft?.time_range ?? range, scope: scopeKey, result });
+  let llmMs = 0;
+  let toolsMs = 0;
+  /**
+   * Panel checks by content: several add_panel calls in one step start their queries together
+   * (in parallel), while the panels are still added to the dashboard one by one, in order.
+   */
+  const checks = new Map<string, ReturnType<typeof checkPanel>>();
+  const checkOnce = (p: Panel, r: TimeRangeKey) => {
+    const k = JSON.stringify([r, p.type, p.esql, p.x, p.y, p.series, p.title]);
+    let c = checks.get(k);
+    if (!c) {
+      c = checkPanel(p, r, scope, signal);
+      checks.set(k, c);
+    }
+    return c;
+  };
+  const startAddPanelChecks = (calls: ToolCall[]) => {
+    for (const call of calls) {
+      if (call.name !== "add_panel") continue;
+      try {
+        const raw = JSON.parse(call.arguments || "{}").panel ?? {};
+        const parsed = PanelSchema.safeParse({ ...raw, id: "tmp", width: raw.width ?? "half" });
+        if (parsed.success) void checkOnce(parsed.data, draft?.time_range ?? range).catch(() => undefined);
+      } catch {
+        /* reported when the call runs */
+      }
+    }
+  };
   // The field list goes into the prompt, so the model doesn't spend steps discovering it.
   const fields = await logFieldsSafe(indices);
   const convo: ChatCompletionMessageParam[] = [
-    { role: "system", content: systemPrompt(draft, range, { scope, fields, context, indices }) },
+    { role: "system", content: systemPrompt(draft, range, { scope, fields, context, indices, question: last?.content }) },
     ...input.messages.map((m) => ({ role: m.role, content: m.content }) as ChatCompletionMessageParam),
   ];
 
@@ -338,14 +425,14 @@ export async function runAgent(input: {
     } catch {
       return { error: "Arguments were not valid JSON" };
     }
-    const key = call.name === "set_dashboard" ? "" : `${call.name}:${JSON.stringify(args).replace(/\s+/g, " ")}`;
+    const key = MUTATING.has(call.name) ? "" : `${call.name}:${JSON.stringify(args).replace(/\s+/g, " ")}`;
     if (key && seen.has(key)) {
       repeats++;
       emit({ type: "tool_start", id: call.id, name: call.name, summary: toolSummary(call.name, args) });
       emit({ type: "tool_end", id: call.id, ok: true, summary: "repeat — same result as before" });
       log.info("chat.tool_repeat", { tool: call.name, repeats });
       return {
-        note: "You already made this exact call in this turn. Here is the same result again. Don't repeat calls: use what you have, or move on to set_dashboard / your answer.",
+        note: "You already made this exact call in this turn. Here is the same result again. Don't repeat calls: use what you have, or move on to add_panel / your answer.",
         result: seen.get(key),
       };
     }
@@ -400,10 +487,70 @@ export async function runAgent(input: {
             end = `${v.errors.length} errors, fixing`;
           } else {
             draft = v.recipe!;
+            for (const p of draft.panels) {
+              const r = v.results?.get(p.id);
+              if (r && p.esql) emitData(p.esql, r);
+            }
             emit({ type: "recipe", recipe: draft });
             result = { ok: true, panels: draft.panels.length };
             end = `dashboard updated · ${draft.panels.length} panels`;
           }
+          break;
+        }
+        case "add_panel": {
+          const raw = args.panel ?? {};
+          const existing = draft?.panels ?? [];
+          let id = typeof raw.id === "string" && raw.id.trim() ? raw.id.trim().slice(0, 40) : slug(String(raw.title ?? ""), existing.length);
+          const replacing = existing.some((p) => p.id === id);
+          if (!replacing) while (existing.some((p) => p.id === id)) id = `${id}-${existing.length + 1}`;
+          const parsed = PanelSchema.safeParse({ ...raw, id, width: raw.width ?? "half" });
+          if (!parsed.success) {
+            ok = false;
+            result = { ok: false, errors: parsed.error.issues.map((x) => `${x.path.join(".")}: ${x.message}`) };
+            end = "invalid panel, fixing";
+            break;
+          }
+          const panel = parsed.data;
+          const check = await checkOnce(panel, draft?.time_range ?? range);
+          if (check.problem) {
+            ok = false;
+            result = { ok: false, error: check.problem, hint: "Fix the query or the columns and call add_panel again." };
+            end = "error, fixing";
+            break;
+          }
+          const panels = replacing ? existing.map((p) => (p.id === id ? panel : p)) : [...existing, panel];
+          draft = RecipeSchema.parse({
+            ...(draft ?? {}),
+            title: String(args.dashboard_title ?? draft?.title ?? panel.title),
+            notes: String(args.notes ?? draft?.notes ?? ""),
+            time_range: draft?.time_range ?? range,
+            scope: scope.length ? scope : undefined,
+            context: context ?? draft?.context,
+            panels,
+          });
+          if (check.result && panel.esql) emitData(panel.esql, check.result);
+          emit({ type: "recipe", recipe: draft });
+          result = {
+            ok: true,
+            panel_id: id,
+            panels_in_dashboard: panels.length,
+            ...(check.result ? { data: preview(check.result, 15) } : {}),
+          };
+          end = `${replacing ? "updated" : "added"} · ${check.result ? `${check.result.values.length} rows` : "text"}`;
+          break;
+        }
+        case "remove_panel": {
+          const id = String(args.id ?? "");
+          if (!draft?.panels.some((p) => p.id === id)) {
+            ok = false;
+            result = { ok: false, error: `No panel with id "${id}". Ids: ${(draft?.panels ?? []).map((p) => p.id).join(", ")}` };
+            end = "no such panel";
+            break;
+          }
+          draft = { ...draft, panels: draft.panels.filter((p) => p.id !== id) };
+          emit({ type: "recipe", recipe: draft });
+          result = { ok: true, panels_in_dashboard: draft.panels.length };
+          end = "removed";
           break;
         }
         case "propose_template": {
@@ -469,7 +616,18 @@ export async function runAgent(input: {
   }
 
   const finish = (outcome: string, steps: number) =>
-    log.info("chat.end", { outcome, steps, tools: toolCount, toolErrors, repeats: repeats || undefined, ms: Date.now() - started, model });
+    log.info("chat.end", {
+      outcome,
+      steps,
+      tools: toolCount,
+      toolErrors,
+      repeats: repeats || undefined,
+      ms: Date.now() - started,
+      // Where the time went: waiting for the model vs. running tools (Elasticsearch).
+      llmMs,
+      toolsMs,
+      model,
+    });
   signal.addEventListener("abort", () => log.info("chat.cancelled", { ms: Date.now() - started, tools: toolCount }), {
     once: true,
   });
@@ -477,8 +635,10 @@ export async function runAgent(input: {
   for (let step = 0; step < config.llm.maxSteps; step++) {
     let text: string;
     let toolCalls: ToolCall[];
+    const tLlm = Date.now();
     try {
       ({ text, toolCalls } = await complete(client, model, convo, signal, emit, step + 1));
+      llmMs += Date.now() - tLlm;
     } catch (err: any) {
       if (!signal.aborted)
         log.error("chat.llm_failed", { step: step + 1, model, status: err?.status, error: err?.message });
@@ -499,10 +659,18 @@ export async function runAgent(input: {
       finish("answered", step + 1);
       return;
     }
-    for (const call of toolCalls) {
-      const result = await execTool(call);
-      convo.push({ role: "tool", tool_call_id: call.id, content: cap(JSON.stringify(result)) });
-    }
+    // Read-only calls run in parallel; calls that change the dashboard run after them, in order.
+    const tTools = Date.now();
+    startAddPanelChecks(toolCalls);
+    const results: unknown[] = new Array(toolCalls.length);
+    await Promise.all(
+      toolCalls.map(async (call, i) => {
+        if (!MUTATING.has(call.name)) results[i] = await execTool(call);
+      }),
+    );
+    for (const [i, call] of toolCalls.entries()) if (MUTATING.has(call.name)) results[i] = await execTool(call);
+    toolsMs += Date.now() - tTools;
+    toolCalls.forEach((call, i) => convo.push({ role: "tool", tool_call_id: call.id, content: cap(JSON.stringify(results[i])) }));
   }
   log.warn("chat.max_steps_reached", { maxSteps: config.llm.maxSteps, tools: toolCount, toolErrors });
   finish("max_steps", config.llm.maxSteps);
