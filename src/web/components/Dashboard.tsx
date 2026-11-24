@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 import { api } from "../api";
 import { Icon } from "./icons";
 import { Menu } from "./Menu";
@@ -62,7 +62,7 @@ function StatusPill({ recipe, dirty, origin }: { recipe: Recipe; dirty: boolean;
     text = `${origin === "link" ? "נפתח מקישור" : "נטען מקובץ"}${dirty ? " · שונה" : ""}`;
     tone = dirty ? "warn" : "neutral";
   } else {
-    text = "טיוטה · הקישור בשורת הכתובת שומר אותה";
+    text = "עדיין לא נשמר · אפשר לשתף את הקישור";
     tone = "warn";
   }
   return <span className={`pill ${tone}`}>{text}</span>;
@@ -117,6 +117,8 @@ export function Dashboard(props: {
   pendingRange: TimeRangeKey;
   pendingScope?: Scope;
   onRunAll: () => void;
+  /** Shown when there is no dashboard yet: templates and example questions. */
+  start?: ReactNode;
   tick: number;
   saving: boolean;
   recent: RecentItem[];
@@ -180,19 +182,18 @@ export function Dashboard(props: {
       <section className="board" aria-label="דשבורד">
         {fileInput}
         <div className="empty">
-          <h1>דשבורד חדש</h1>
-          <p>
-            כתבי בצ'אט מה לבדוק בלוגים. המודל יחקור את הנתונים ויבנה כאן דשבורד חי: כל פאנל הוא שאילתת ES|QL שרצה מחדש בכל רענון.
-          </p>
+          <h1>מה רוצים לבדוק?</h1>
+          <p>כתבי שאלה בצ'אט, בעברית רגילה. המודל יבדוק בלוגים, יענה, ויוסיף כאן גרפים שמראים את התשובה.</p>
+          {props.start}
           <div className="empty-actions">
-            <button type="button" className="btn" onClick={() => fileRef.current?.click()}>
-              <Icon.Upload size={16} /> ייבוא מקובץ JSON
-            </button>
             {canRead && (
               <a className="btn" href="#/library">
-                הדשבורדים בספרייה
+                הדשבורדים השמורים
               </a>
             )}
+            <button type="button" className="btn ghost" onClick={() => fileRef.current?.click()}>
+              <Icon.Upload size={16} /> ייבוא מקובץ
+            </button>
           </div>
           {recent.length > 0 && (
             <div className="recent">
@@ -231,7 +232,7 @@ export function Dashboard(props: {
           />
           <div className="board-meta">
             <StatusPill recipe={recipe} dirty={dirty} origin={origin} />
-            <span className="muted">{recipe.panels.length} פאנלים · ES|QL · חי</span>
+            <span className="muted">{recipe.panels.length} פאנלים · מתעדכן בכל הרצה</span>
             {recipe.scope?.length ? (
               <span className="board-scope" title="המיקוד חל על כל הפאנלים. משנים אותו בסרגל המיקוד בצ'אט.">
                 מיקוד:

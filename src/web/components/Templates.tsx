@@ -197,36 +197,64 @@ export function TemplateEditor(props: {
 // Pickers and cards
 // ---------------------------------------------------------------------------
 
-/** "Start from a template" — shown in an empty chat. */
-export function TemplatePicker(props: { info: TemplatesInfo | null; onStart: (t: Template) => void; onNew: () => void }) {
-  const { info, onStart, onNew } = props;
-  if (!info) return null;
+/** Start screen (no dashboard yet): templates as big cards, and example questions. */
+export function StartScreen(props: {
+  info: TemplatesInfo | null;
+  onStart: (t: Template) => void;
+  onAsk: (q: string) => void;
+  onNewTemplate: () => void;
+  busy?: boolean;
+}) {
+  const { info, onStart, onAsk, onNewTemplate, busy } = props;
+  const templates = info?.templates ?? [];
   return (
-    <div className="tpl-picker">
-      <div className="tpl-picker-head">
-        <span>להתחיל מתבנית</span>
-        <button type="button" className="link-btn" onClick={onNew}>
-          תבנית חדשה
-        </button>
-      </div>
-      {info.templates.length === 0 ? (
-        <p className="muted small">
-          עדיין אין תבניות. אפשר לבקש מהמודל: "צור תבנית ללוגים של webui", או ליצור אחת ידנית.
-        </p>
-      ) : (
-        <div className="tpl-list">
-          {info.templates.slice(0, 8).map((t) => (
-            <button key={`${t.store}-${t.id}`} type="button" className="tpl-item" onClick={() => onStart(t)}>
-              <span className="tpl-name">{t.name}</span>
-              {t.description && <span className="tpl-desc">{t.description}</span>}
-              <Chips t={t} />
+    <div className="start">
+      {templates.length > 0 && (
+        <section aria-labelledby="start-tpl">
+          <h2 id="start-tpl" className="start-h">
+            להתחיל ממשהו מוכן
+          </h2>
+          <div className="start-cards">
+            {templates.slice(0, 9).map((t) => (
+              <button key={`${t.store}-${t.id}`} type="button" className="start-card" onClick={() => onStart(t)} disabled={busy}>
+                <span className="tpl-name">{t.name}</span>
+                {t.description && <span className="tpl-desc">{t.description}</span>}
+                <Chips t={t} />
+              </button>
+            ))}
+          </div>
+        </section>
+      )}
+      <section aria-labelledby="start-q">
+        <h2 id="start-q" className="start-h">
+          או לשאול, למשל
+        </h2>
+        <div className="start-questions">
+          {START_QUESTIONS.map((q) => (
+            <button key={q} type="button" className="chip" onClick={() => onAsk(q)} disabled={busy}>
+              {q}
             </button>
           ))}
         </div>
+      </section>
+      {templates.length === 0 && info?.saveTo && (
+        <p className="muted small">
+          טיפ: תבנית שומרת איפה הנתונים של מערכת מסוימת ועל מה להתמקד, כך ששיחה חדשה מתחילה ישר מהמקום הנכון.{" "}
+          <button type="button" className="link-btn" onClick={onNewTemplate}>
+            יצירת תבנית
+          </button>
+        </p>
       )}
     </div>
   );
 }
+
+const START_QUESTIONS = [
+  "מה השגיאות הנפוצות ב-24 השעות האחרונות?",
+  "איזה שירות הכי רועש בלוגים?",
+  "היו קפיצות בשגיאות היום? מתי ואיפה?",
+  "בנה דשבורד בריאות כללי",
+];
 
 /** The model's proposed template, inside its chat message. */
 export function TemplateProposal(props: {

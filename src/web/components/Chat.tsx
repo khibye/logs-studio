@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import { Icon } from "./icons";
+import { friendlyError } from "../friendlyError";
 import { TemplateProposal } from "./Templates";
 import type { Template } from "../../shared/template";
 
@@ -138,7 +139,14 @@ export function Chat(props: {
     handle.addEventListener("pointercancel", up);
   };
 
-  const suggestions = props.suggestions?.length ? props.suggestions : hasDashboard ? SUGGESTIONS_EXISTING : SUGGESTIONS_NEW;
+  // An empty chat next to the start screen doesn't repeat its example questions.
+  const suggestions = props.suggestions?.length
+    ? props.suggestions
+    : hasDashboard
+      ? SUGGESTIONS_EXISTING
+      : messages.length
+        ? SUGGESTIONS_NEW
+        : [];
 
   return (
     <aside className="chat" aria-label="שיחה עם המודל" ref={asideRef} style={width ? { flex: `0 0 ${width}px`, maxWidth: "none" } : undefined}>
@@ -241,7 +249,11 @@ export function Chat(props: {
               {m.streaming && !m.content && <div className="typing" aria-label="המודל עובד" />}
               {m.error && (
                 <div className="msg-error" role="alert">
-                  <bdi dir="ltr">{m.error}</bdi>
+                  <strong>{friendlyError(m.error).title}</strong> {friendlyError(m.error).hint}
+                  <details className="tech">
+                    <summary>פרטים טכניים</summary>
+                    <bdi dir="ltr">{m.error}</bdi>
+                  </details>
                 </div>
               )}
               {mixedModels && m.model && (

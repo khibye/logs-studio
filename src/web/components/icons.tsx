@@ -128,6 +128,19 @@ export const Icon = {
       <path d="M20 12a8 8 0 0 1-11.7 7.1L4 20l1-4A8 8 0 1 1 20 12z" />
     </Svg>
   ),
+  Dots: (p: P) => (
+    <Svg {...p}>
+      <circle cx="5" cy="12" r="1.4" fill="currentColor" />
+      <circle cx="12" cy="12" r="1.4" fill="currentColor" />
+      <circle cx="19" cy="12" r="1.4" fill="currentColor" />
+    </Svg>
+  ),
+  Table: (p: P) => (
+    <Svg {...p}>
+      <rect x="4" y="5" width="16" height="14" rx="2" />
+      <path d="M4 10h16M4 14.5h16M10 10v9" />
+    </Svg>
+  ),
   Play: (p: P) => (
     <Svg {...p}>
       <path d="M8 5.5v13l10-6.5z" />

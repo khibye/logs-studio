@@ -7,7 +7,7 @@ import { Library } from "./components/Library";
 import { Admin } from "./components/Admin";
 import { ScopeBar } from "./components/ScopeBar";
 import { putPanelData } from "./prefetch";
-import { ContextLine, TemplateEditor, TemplatePicker, TemplatesSection, emptyTemplate } from "./components/Templates";
+import { ContextLine, StartScreen, TemplateEditor, TemplatesSection, emptyTemplate } from "./components/Templates";
 import type { Scope } from "../shared/scope";
 import { contextFromTemplate, type Template } from "../shared/template";
 import { isEmptyContext, type Context } from "../shared/context";
@@ -694,9 +694,6 @@ export function App() {
                 />
               </>
             }
-            starter={
-              <TemplatePicker info={templatesInfo} onStart={applyTemplate} onNew={() => setEditingTemplate(templateFromCurrent())} />
-            }
             suggestions={starterQuestions}
             onSaveProposal={(t) => setEditingTemplate({ ...t })}
             onUseProposal={(t) => {
@@ -720,6 +717,18 @@ export function App() {
               <div className="board loading-board">טוען דשבורד…</div>
             ) : (
               <Dashboard
+                start={
+                  <StartScreen
+                    info={templatesInfo}
+                    busy={busy}
+                    onStart={(t) => {
+                      applyTemplate(t);
+                      showToast({ tone: "ok", text: `התבנית "${t.name}" פעילה. אפשר לשאול.` });
+                    }}
+                    onAsk={(q) => actions.ask(q)}
+                    onNewTemplate={() => setEditingTemplate(templateFromCurrent())}
+                  />
+                }
                 recipe={recipe}
                 dirty={dirty}
                 origin={origin}

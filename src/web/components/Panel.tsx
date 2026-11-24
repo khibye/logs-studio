@@ -4,6 +4,8 @@ import { Chart, numberFmt, type PointInfo, type PrevOverlay } from "./Chart";
 import { Icon } from "./icons";
 import { discoverUrl } from "../../shared/discover";
 import { downloadCsv, toCsv } from "../csv";
+import { Menu } from "./Menu";
+import { friendlyError } from "../friendlyError";
 import { takePanelData } from "../prefetch";
 import { applyScope, type Scope, type ScopeFilter } from "../../shared/scope";
 import {
@@ -297,13 +299,33 @@ export function PanelView(props: {
   const body = (side: Side, i: number) => {
     const st = side.state;
     if (panel.type === "text") return <p className="panel-text">{panel.text}</p>;
-    if (st.error)
+    if (st.error) {
+      const f = friendlyError(st.error);
       return (
         <div className="panel-error" role="alert">
-          <strong>השאילתה נכשלה</strong>
-          <span dir="ltr">{st.error}</span>
+          <strong>{f.title}</strong>
+          {f.hint && <span>{f.hint}</span>}
+          <div className="panel-error-actions">
+            {f.kind === "query" && (
+              <button
+                type="button"
+                className="btn small"
+                onClick={() => onAsk(`הפאנל "${panel.title}" (id: ${panel.id}) נכשל עם השגיאה: ${st.error}\nתקן אותו.`)}
+              >
+                <Icon.Chat size={13} /> בקשי מהמודל לתקן
+              </button>
+            )}
+            <button type="button" className="btn small ghost" onClick={runThis}>
+              <Icon.Play size={13} /> נסי שוב
+            </button>
+          </div>
+          <details className="tech">
+            <summary>פרטים טכניים</summary>
+            <span dir="ltr">{st.error}</span>
+          </details>
         </div>
       );
+    }
     if (!active)
       return (
         <div className="panel-idle" style={{ height: height || 72 }}>
@@ -388,79 +410,90 @@ export function PanelView(props: {
           {loading && <span className="spinner" aria-label="טוען" />}
         </div>
         <div className="panel-actions">
-          {panel.type !== "text" && (
-            <button
-              type="button"
-              className="icon-btn"
-              onClick={() => onAsk(`הסבר מה רואים בפאנל "${panel.title}" (id: ${panel.id}) ומה בולט בו.`)}
-              title="שאל על הפאנל בצ'אט"
-              aria-label="שאל על הפאנל בצ'אט"
-            >
-              <Icon.Chat size={15} />
-            </button>
-          )}
-          {panel.esql && discoverBase && (
-            <a
-              className="icon-btn"
-              href={discoverUrl(discoverBase, runEsql!, range)}
-              target="_blank"
-              rel="noreferrer"
-              title="פתח ב-Discover"
-              aria-label="פתח ב-Discover"
-            >
-              <Icon.External size={15} />
-            </a>
-          )}
-          {panel.esql && (
-            <button
-              type="button"
-              className={`icon-btn ${showQuery ? "on" : ""}`}
-              onClick={() => setShowQuery((v) => !v)}
-              title="הצג שאילתה"
-              aria-label="הצג שאילתה"
-              aria-pressed={showQuery}
-            >
-              <Icon.Code size={15} />
-            </button>
-          )}
           {panel.esql && (
             <button
               type="button"
               className={`icon-btn ${loading ? "spinning" : ""}`}
               onClick={runThis}
               disabled={loading}
-              title={`הרץ רק את הפאנל הזה (${TIME_RANGES[pendingRange].label})`}
+              title={`הרץ את הפאנל (${TIME_RANGES[pendingRange].label})`}
               aria-label="הרץ את הפאנל"
             >
               <Icon.Play size={15} />
             </button>
           )}
-          {panel.esql && (
+          {panel.type !== "text" && (
             <button
               type="button"
               className="icon-btn"
-              onClick={exportCsv}
-              disabled={exporting || !main.data}
-              title="הורד CSV"
-              aria-label="הורד CSV"
+              onClick={() => onAsk(`הסבר מה רואים בפאנל "${panel.title}" (id: ${panel.id}) ומה בולט בו.`)}
+              title="שאלי על הפאנל בצ'אט"
+              aria-label="שאלי על הפאנל בצ'אט"
             >
-              {exporting ? <span className="spinner" aria-hidden="true" /> : <Icon.Download size={15} />}
+              <Icon.Chat size={15} />
             </button>
           )}
-          {isChart && (
-            <button
-              type="button"
-              className={`icon-btn text ${showData ? "on" : ""}`}
-              onClick={() => setShowData((v) => !v)}
-              aria-pressed={showData}
-              title="הצג כטבלה"
-            >
-              טבלה
-            </button>
-          )}
-          <button type="button" className="icon-btn" onClick={onRemove} title="הסר פאנל" aria-label="הסר פאנל">
-            <Icon.X size={15} />
-          </button>
+          <Menu label={<Icon.Dots size={15} />} className="icon-btn" ariaLabel="עוד פעולות לפאנל">
+            {(close) => (
+              <div className="menu-list">
+                {isChart && (
+                  <button
+                    type="button"
+                    className="menu-item"
+                    aria-pressed={showData}
+                    onClick={() => {
+                      setShowData((v) => !v);
+                      close();
+                    }}
+                  >
+                    <Icon.Table size={15} /> {showData ? "הצג כגרף" : "הצג כטבלה"}
+                  </button>
+                )}
+                {panel.esql && (
+                  <button
+                    type="button"
+                    className="menu-item"
+                    disabled={exporting || !main.data}
+                    onClick={() => {
+                      close();
+                      void exportCsv();
+                    }}
+                  >
+                    <Icon.Download size={15} /> הורדה ל-CSV (Excel)
+                  </button>
+                )}
+                {panel.esql && discoverBase && (
+                  <a className="menu-item" href={discoverUrl(discoverBase, runEsql!, range)} target="_blank" rel="noreferrer" onClick={close}>
+                    <Icon.External size={15} /> פתיחה ב-Kibana (Discover)
+                  </a>
+                )}
+                {panel.esql && (
+                  <button
+                    type="button"
+                    className="menu-item"
+                    aria-pressed={showQuery}
+                    onClick={() => {
+                      setShowQuery((v) => !v);
+                      close();
+                    }}
+                  >
+                    <Icon.Code size={15} /> {showQuery ? "הסתר את השאילתה" : "הצג את השאילתה"}
+                  </button>
+                )}
+                <div className="menu-sep" />
+                <button
+                  type="button"
+                  className="menu-item danger"
+                  onClick={() => {
+                    close();
+                    onRemove();
+                  }}
+                >
+                  <Icon.X size={15} /> הסרת הפאנל
+                </button>
+              </div>
+            )}
+          </Menu>
         </div>
       </header>
 
